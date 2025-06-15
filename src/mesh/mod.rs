@@ -1,5 +1,6 @@
 
 mod vertex;
+use vectors::Vector;
 pub use vertex::*;
 use wgpu::{util::DeviceExt, Device};
 pub struct Mesh {
@@ -12,12 +13,12 @@ impl Mesh {
         let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(verts),
+                contents: bytemuck::cast_slice(verts.iter().map(|v| v.wgpu_map()).collect::<Vec<_>>().as_slice()),
                 usage: wgpu::BufferUsages::VERTEX,
             }
         );
         Self {
-            verts: verts.to_vec(),
+            verts: verts.to_vec(),   
             vertex_buffer
         }
     }

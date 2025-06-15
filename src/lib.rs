@@ -1,7 +1,5 @@
 use std::{iter, sync::Arc};
 
-use image::Rgba;
-use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
@@ -78,9 +76,7 @@ impl State {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        // Shader code in this tutorial assumes an Srgb surface texture. Using a different
-        // one will result all the colors comming out darker. If you want to support non
-        // Srgb surfaces, you'll need to account for that when drawing to the frame.
+
         let surface_format = surface_caps
             .formats
             .iter()
@@ -98,61 +94,18 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        //let diffuse_bytes = include_bytes!("happy-tree.png");
-        //let diffuse_texture =
-        //    texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
-        /*let mut surfimg: image::ImageBuffer<image::Rgba<u8>, Vec<_>> = image::ImageBuffer::new(WIDTH, HEIGHT);
-        surfimg.put_pixel(250, 250, Rgba([255, 0, 0, 255]));
-        let diffuse_texture = texture::Texture::from_image(&device, &queue, &surfimg.into(), Some("screen texture")).unwrap();
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });*/
         let mesh = Mesh::new(&[
                 Vertex {
                     position: [0.5, 0.25, 0.0],
-                    color: [1.0, 0.0, 0.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
                 },
                 Vertex {
                     position: [0.75, 0.75, 0.0],
-                    color: [0.0, 1.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
                 },
                 Vertex {
-                    position: [0.25, 0.75, 0.0],
-                    color: [0.0, 0.0, 1.0],
+                    position: [0.0, 0.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
                 }
             ], &device
         );
@@ -213,17 +166,6 @@ impl State {
             // Useful for optimizing shader compilation on Android
             cache: None,
         });
-
-        /*let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });*/
 
         Ok(Self {
             surface,
