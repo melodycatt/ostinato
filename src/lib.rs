@@ -1,19 +1,24 @@
 use std::{iter, sync::Arc};
 
+use cgmath::{One, Quaternion, Zero};
+use wgpu::util::DeviceExt;
 use winit::{
-    application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
+    application::ApplicationHandler, dpi::{LogicalPosition, PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::mesh::{Mesh, Vertex};
+use crate::{camera::{controller::CameraController, Camera, CameraUniform}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{Mesh, Vertex}};
 
 mod texture;
 mod mesh;
+mod camera;
+mod input;
+mod component;
 
-const WIDTH: u32 = 500;
-const HEIGHT: u32 = 500;
+const WIDTH: u32 = 1000;
+const HEIGHT: u32 = 1000;
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -23,6 +28,12 @@ pub struct State {
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
     mesh: Mesh,
+
+    camera: Camera,
+    camera_uniform: CameraUniform,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    camera_controller: CameraController,
     //vertex_buffer: wgpu::Buffer,
     //index_buffer: wgpu::Buffer,
     // NEW!
@@ -30,6 +41,9 @@ pub struct State {
     // diffuse_texture: texture::Texture,
     // diffuse_bind_group: wgpu::BindGroup,
     window: Arc<Window>,
+
+    mouse: MouseData,
+    keyboard: KeyboardData
 }
 
 impl State {
@@ -107,17 +121,73 @@ impl State {
                     position: [0.0, 0.0, 0.0],
                     color: [0.0, 0.0, 1.0, 1.0],
                 }
-            ], &device
-        );
-
+                ], &[0, 1, 2,   2, 1, 0], &device
+            );
+            
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/mesh.wgsl"));
+        
+        window.set_cursor_position(LogicalPosition::new(50.0, 50.0))?;
+        window.set_cursor_visible(false);
+        window.set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
+
+        let camera = Camera {
+            // position the camera 1 unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 0.0, 2.0).into(),
+            rotation: Quaternion::one(),
+            // have it look at the origin
+            //target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            //up: (0.0, 1.0, 0.0).into(),
+            aspect: config.width as f32 / config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+
+        let camera_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }    
+        );    
+
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },    
+                    count: None,
+                }    
+            ],    
+            label: Some("camera_bind_group_layout"),
+        });    
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                }    
+            ],    
+            label: Some("camera_bind_group"),
+        });    
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&camera_bind_group_layout],
                 push_constant_ranges: &[],
-            });
+            });    
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -127,7 +197,7 @@ impl State {
                 entry_point: Some("vs_main"),
                 buffers: &[Vertex::desc()],
                 compilation_options: Default::default(),
-            },
+            },    
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
@@ -136,11 +206,11 @@ impl State {
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent::REPLACE,
                         alpha: wgpu::BlendComponent::REPLACE,
-                    }),
+                    }),    
                     write_mask: wgpu::ColorWrites::ALL,
-                })],
+                })],    
                 compilation_options: Default::default(),
-            }),
+            }),    
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -153,19 +223,20 @@ impl State {
                 unclipped_depth: false,
                 // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
-            },
+            },    
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
-            },
+            },    
             // If the pipeline will be used with a multiview render pass, this
             // indicates how many array layers the attachments will have.
             multiview: None,
             // Useful for optimizing shader compilation on Android
             cache: None,
-        });
+        });    
+
 
         Ok(Self {
             surface,
@@ -175,11 +246,19 @@ impl State {
             is_surface_configured: false,
             render_pipeline,
             mesh,
+            camera,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
+            camera_controller: CameraController::new(0.05),
             //vertex_buffer,
             //index_buffer,
             //diffuse_texture,
             //diffuse_bind_group,
             window,
+
+            mouse: MouseData::new(),
+            keyboard: KeyboardData::new(),
         })
     }
 
@@ -200,7 +279,13 @@ impl State {
         }
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera, &self.mouse, &self.keyboard);
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        self.mouse.update();
+        self.keyboard.update();
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
@@ -243,10 +328,10 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            //render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.mesh.vertex_buffer.slice(..));
-            //render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw(0..3, 0..1);
+            render_pass.set_index_buffer(self.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.mesh.indices.len() as u32, 0, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -334,13 +419,16 @@ impl ApplicationHandler<State> for App {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
+        window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
         let state = match &mut self.state {
             Some(canvas) => canvas,
             None => return,
         };
+        state.camera_controller.process_events(&event);
+        state.mouse.window_event(event_loop, window_id, &event);
+        state.keyboard.window_event(event_loop, window_id, &event);
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -376,6 +464,19 @@ impl ApplicationHandler<State> for App {
             _ => {}
         }
     }
+
+    fn device_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            device_id: DeviceId,
+            event: DeviceEvent,
+    ) {
+        let state = match &mut self.state {
+            Some(canvas) => canvas,
+            None => return,
+        };
+        state.mouse.device_event(event_loop, device_id, &event);
+    }
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -406,3 +507,23 @@ pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
 
     Ok(())
 }
+
+/*macro_rules! bind_group_layout {
+    ($device:ident, $($binding:expr, $visibility:expr, $ty:expr, $count:expr),*, $label:expr) => {
+        $device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[$
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: ,
+                }
+            ],
+            label: Some($label),
+        });
+    };
+}*/
