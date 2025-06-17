@@ -25,8 +25,4 @@ impl Vertex {
             ],
         }
     }
-
-    pub fn wgpu_map(&self) -> Vertex {
-        Vertex { position: [self.position[0] * -2.0 + 1.0, self.position[1] * -2.0 + 1.0, self.position[2]], color: self.color }
-    }
 }

@@ -1,7 +1,9 @@
-use cgmath::{Quaternion, Rad, Rotation, Rotation3, Vector3};
-use winit::{event::{ElementState, KeyEvent, MouseButton, WindowEvent}, keyboard::{self, KeyCode, PhysicalKey}};
+use std::f32::consts::{FRAC_PI_2, PI};
 
-use crate::{camera::{self, Camera}, input::{keyboard::KeyboardData, mouse::MouseData}, State};
+use cgmath::{Quaternion, Rad, Rotation3, Vector3};
+use winit::{event::{ElementState, KeyEvent, WindowEvent}, keyboard::{KeyCode, PhysicalKey}};
+
+use crate::{camera::{Camera}, input::{keyboard::KeyboardData, mouse::MouseData}};
 
 pub struct CameraController {
     pub speed: f32,
@@ -9,6 +11,8 @@ pub struct CameraController {
     pub is_backward_pressed: bool,
     pub is_left_pressed: bool,
     pub is_right_pressed: bool,
+    pub pitch: f32,
+    pub yaw: f32,
 }
 
 impl CameraController {
@@ -19,6 +23,8 @@ impl CameraController {
             is_backward_pressed: false,
             is_left_pressed: false,
             is_right_pressed: false,
+            pitch: 0.0,
+            yaw: 0.0
         }
     }
 
@@ -58,9 +64,9 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, camera: &mut Camera, mouse: &MouseData, keyboard: &KeyboardData) {
+    pub fn update_camera(&mut self, camera: &mut Camera, mouse: &MouseData, keyboard: &KeyboardData) {
         //use cgmath::InnerSpace;
-        println!("{:?}", mouse.delta);
+        //println!("{:?}", mouse.delta);
         if keyboard.is_pressed(KeyCode::KeyW.into())
         || keyboard.is_pressed(KeyCode::ArrowUp.into()) {
             camera.eye += camera.rotation * Vector3 { x: 0.0, y: 0.0, z: -self.speed };
@@ -77,7 +83,18 @@ impl CameraController {
         || keyboard.is_pressed(KeyCode::ArrowRight.into()) {
             camera.eye += camera.rotation * Vector3 { x: self.speed, y: 0.0, z: 0.0 };
         }
+        if keyboard.is_pressed(KeyCode::KeyE.into()) {
+            camera.eye += Vector3 { y: self.speed, x: 0.0, z: 0.0 };
+        }
+        if keyboard.is_pressed(KeyCode::KeyQ.into()) {
+            camera.eye += Vector3 { y: -self.speed, x: 0.0, z: 0.0 };
+        }
 
-        camera.rotation = camera.rotation * Quaternion::from_angle_y(Rad(-mouse.delta.x as f32 * 0.003)) * Quaternion::from_angle_x(Rad(-mouse.delta.y as f32 * 0.003));
+        self.yaw -= mouse.delta.x as f32 * 0.003;
+        self.pitch -= mouse.delta.y as f32 * 0.003;
+        self.pitch = self.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+        self.yaw %= 2.0 * PI;
+
+        camera.rotation = Quaternion::from_angle_y(Rad(self.yaw)) * Quaternion::from_angle_x(Rad(self.pitch));
     }
 }

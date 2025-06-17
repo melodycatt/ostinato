@@ -6,9 +6,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_co
     cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
 
-use core::task;
-
-use cgmath::{Point3, Quaternion, Vector3, Matrix4, InnerSpace, Rotation3};
+use cgmath::{Point3, Quaternion, Vector3};
 
 pub struct Camera {
     pub eye: Point3<f32>,
