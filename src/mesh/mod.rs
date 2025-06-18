@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 pub use vertex::*;
 use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, Device, Queue};
 
-use crate::{component::RenderObject, shader::{self, Shader}, State};
+use crate::{shader::{self, Shader}, State};
 
 pub struct Mesh {
     pub verts: Vec<Vertex>,
@@ -17,28 +17,25 @@ pub struct Mesh {
     pub shader: Shader
 }
 
-#[allow(dead_code)]
 impl Mesh {
     pub fn new(verts: impl Into<Vec<Vertex>>, indices: impl Into<Vec<u16>>, shader: Shader, state: &State) -> Self {
+        let device = state.wgpu().device.clone();
         let verts = verts.into();
         let indices = indices.into();
-        let vertex_buffer = state.device.create_buffer_init(
+        let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&verts),
                 usage: wgpu::BufferUsages::VERTEX,
             }
         );
-        let index_buffer = state.device.create_buffer_init(
+        let index_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsages::INDEX,
             }
         );
-
-        //let bind_groups = shader.bind_group_layouts.iter().for
-
 
         Self {
             verts,   
@@ -51,20 +48,22 @@ impl Mesh {
     }
     
     pub fn construct<P: AsRef<Path>>(verts: impl Into<Vec<Vertex>>, indices: impl Into<Vec<u16>>, bind_groups: &[BindGroup], layouts: &[&BindGroupLayout], shader_path: P, state: &mut State) -> Self {
+        let device = state.wgpu().device.clone();
+
         let f = fs::read_to_string(shader_path).expect("shader non existent in creating cube");
         let descriptor = wgpu::ShaderModuleDescriptor {
             label: Some("mesh shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&f)),
         };
     // include_wgsl!()
-        let shader = state.device.create_shader_module(descriptor);
+        let shader = device.create_shader_module(descriptor);
 
-        let camera_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &state.camera_bind_group_layout,
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &state.camera().bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: state.camera_buffer.as_entire_binding(),
+                    resource: state.camera().buffer.as_entire_binding(),
                 }   
             ],    
             label: Some("mesh camera bind group"),
@@ -72,7 +71,7 @@ impl Mesh {
 
         Mesh::new(
             verts, indices,
-            shader::Shader::new(shader, [&[camera_bind_group], bind_groups].concat(), state.render_pipeline_layout(layouts) /*&[Arc::new(camera_bind_group_layout), Arc::new(time_bind_group_layout)]*/, &[Vertex::desc()], &[Some(shader::Shader::screen_target(state.config.format))], &state.device),
+            shader::Shader::new(shader, [&[camera_bind_group], bind_groups].concat(), state.render_pipeline_layout(layouts) /*&[Arc::new(camera_bind_group_layout), Arc::new(time_bind_group_layout)]*/, &[Vertex::desc()], &[Some(shader::Shader::screen_target(state.wgpu().config.format))], &device),
             &state
         )
     }
@@ -109,8 +108,8 @@ impl Mesh {
     }
 }
 
-impl RenderObject for Mesh {
-    fn render(&mut self, pass: &mut wgpu::RenderPass, _state: &mut State) {
+/*impl RenderObject for Mesh {
+    fn render(&mut self, pass: &mut wgpu::RenderPass) {
         pass.set_pipeline(&self.shader.render_pipeline);
         for i in 0..self.shader.bind_groups.len() {
             pass.set_bind_group(i as u32, &self.shader.bind_groups[i], &[]);
@@ -119,7 +118,7 @@ impl RenderObject for Mesh {
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
     }
-}
+}*/
 
 pub fn new_cube<P: AsRef<Path>>(position: [f32; 3], bind_groups: &[BindGroup], layouts: &[&BindGroupLayout], shader_path: P, state: &mut State) -> Mesh {
     let verts = &[

@@ -1,16 +1,12 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use cgmath::{Quaternion, Rad, Rotation3, Vector3};
-use winit::{event::{ElementState, KeyEvent, WindowEvent}, keyboard::{KeyCode, PhysicalKey}};
+use winit::{keyboard::{KeyCode}};
 
 use crate::{camera::{Camera}, input::{keyboard::KeyboardData, mouse::MouseData}};
 
 pub struct CameraController {
     pub speed: f32,
-    pub is_forward_pressed: bool,
-    pub is_backward_pressed: bool,
-    pub is_left_pressed: bool,
-    pub is_right_pressed: bool,
     pub pitch: f32,
     pub yaw: f32,
 }
@@ -19,16 +15,12 @@ impl CameraController {
     pub fn new(speed: f32) -> Self {
         Self {
             speed,
-            is_forward_pressed: false,
-            is_backward_pressed: false,
-            is_left_pressed: false,
-            is_right_pressed: false,
             pitch: 0.0,
             yaw: 0.0
         }
     }
 
-    pub fn process_events(&mut self, event: &WindowEvent) -> bool {
+    /*pub fn process_events(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -62,7 +54,7 @@ impl CameraController {
             },
             _ => false,
         }
-    }
+    }*/
 
     pub fn update_camera(&mut self, camera: &mut Camera, mouse: &MouseData, keyboard: &KeyboardData) {
         //use cgmath::InnerSpace;

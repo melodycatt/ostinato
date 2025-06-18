@@ -1,7 +1,8 @@
-use std::{env, iter, sync::Arc, time::Instant};
+use std::{any::{Any, TypeId}, cell::{Ref, RefCell, RefMut}, collections::HashMap, env, iter, num::NonZeroU32, sync::Arc, time::Instant};
 
 use cgmath::{One, Quaternion};
-use wgpu::{util::DeviceExt, BindGroupLayout, PipelineLayout};
+use hecs::{Component, Entity, World};
+use wgpu::{util::DeviceExt, BindGroupLayout, Buffer, PipelineLayout, PresentMode};
 use winit::{
     application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
@@ -9,14 +10,13 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{camera::{controller::CameraController, Camera, CameraUniform}, component::RenderObject, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{Mesh}};
+use crate::{camera::{controller::CameraController, Camera, CameraConfig, CameraUniform}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::Mesh, texture::Texture};
 
-mod texture;
-mod mesh;
-mod camera;
-mod input;
-mod component;
-mod shader;
+pub mod texture;
+pub mod mesh;
+pub mod camera;
+pub mod input;
+pub mod shader;
 
 const WIDTH: u32 = 1000;
 const HEIGHT: u32 = 1000;
@@ -27,47 +27,108 @@ pub struct TimeUniform {
     time: f32,
 }
 
-pub struct State {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    is_surface_configured: bool,
+/*pub struct Context {
+    pub surface: wgpu::Surface<'static>,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
+    pub is_surface_configured: bool,
     //render_pipeline: wgpu::RenderPipeline,
-    render_objects: Vec<Box<dyn RenderObject>>,
 
-    depth_texture: texture::Texture,
+    pub depth_texture: texture::Texture,
 
-    camera: Camera,
-    camera_uniform: CameraUniform,
-    camera_buffer: wgpu::Buffer,
+    pub camera: Camera,
+    pub camera_uniform: CameraUniform,
+    pub camera_buffer: wgpu::Buffer,
     //camera_bind_group: wgpu::BindGroup,
-    camera_bind_group_layout: wgpu::BindGroupLayout,
-    camera_controller: CameraController,
+    pub camera_bind_group_layout: wgpu::BindGroupLayout,
+    pub camera_controller: CameraController,
 
-    start: Instant,
+    pub start: Instant,
     /*time_bind_group: wgpu::BindGroup,
-    time_uniform: TimeUniform,*/
-    time_buffer: wgpu::Buffer,
+    pub time_uniform: TimeUniform,*/
+    pub time_buffer: wgpu::Buffer,
     //vertex_buffer: wgpu::Buffer,
     //index_buffer: wgpu::Buffer,
     // NEW!
     //#[allow(dead_code)]
     // diffuse_texture: texture::Texture,
     // diffuse_bind_group: wgpu::BindGroup,
-    window: Arc<Window>,
+    pub window: Arc<Window>,
 
-    mouse: MouseData,
-    keyboard: KeyboardData
+    pub mouse: MouseData,
+    pub keyboard: KeyboardData
+}*/
+pub struct State {
+    delta: Instant,
+    world: World,
+    entities: Vec<Entity>,
+    /// im not gonna stop you from mutating core resources
+    /// but make sure you know what youre doing if you do that
+    /// i dont even know what'll happen
+    /// 
+    /// youre sort of not allowed to remove them though. 
+    /// thatll panic the next time theyre accessed, so you can technically swap them out.
+    /// 
+    /// i would say to avoid removing resources at all because of id exhaustion,
+    /// but lets be real. youre not gonna have 4 billion resources.
+    /// i dont know how you would have 4 billion resources.
+    /// 
+    /// RESOURCES ARE NOT MEANT FOR ENTITIES!
+    resources: HashMap<ResourceId, RefCell<Box<dyn Any>>>
 }
 
+/// if youre mad about the nested resource types
+/// stay mad.
+/// it would be so much worse if we had them all in one enum
+/// then it would either be unclear what each is without docs (bad)
+/// or we prefix every variant with relevant info (eg. ResourceId::WgpuSurface) (also bad)
+/// actually maybe that last one aint THAT bad but TOO LATE LOL
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ResourceId {
+    Wgpu,
+    Camera,
+    DepthTexture,
+    Window,
+    Start,
+    Mouse,
+    Keyboard,
+    Custom(u32)
+}
+/*#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum WgpuResource {
+    Surface,
+    Device,
+    Queue,
+    Config,
+    IsSurfaceConfigured
+}*/
+pub struct WgpuResource {
+    pub surface: wgpu::Surface<'static>,
+    pub device: Arc<wgpu::Device>,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
+    pub is_surface_configured: bool,
+}
+// this will need to change if i want multiple cameras
+/*#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum CameraResource {
+    Camera,
+    Uniform,
+    Buffer,
+    BindGroupLayout,
+    // get rid of this, just make it a system
+    // put the controller logic into a state method that can be called by the user
+    // (unused by the engine)
+    Controller,
+}*/
+
 impl State {
+    /// makes a new state! self.init() will be called immediately after this
     async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
         let start = Instant::now();
 
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -126,160 +187,74 @@ impl State {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
                 
-        //window.set_cursor_position(LogicalPosition::new(50.0, 50.0))?;
         window.set_cursor_visible(false);
         window.set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
 
-        let camera = Camera {
-            // position the camera 1 unit up and 2 units back
-            // +z is out of the screen
+        let camera_config = CameraConfig {
             eye: (0.0, 0.0, 2.0).into(),
             rotation: Quaternion::one(),
-            // have it look at the origin
-            //target: (0.0, 0.0, 0.0).into(),
-            // which way is "up"
-            //up: (0.0, 1.0, 0.0).into(),
-            aspect: config.width as f32 / config.height as f32,
             fovy: 60.0,
             znear: 0.01,
             zfar: 1000.0,
         };
 
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
-
-        let camera_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Camera Buffer"),
-                contents: bytemuck::cast_slice(&[camera_uniform]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }    
-        );    
-
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },    
-                    count: None,
-                }    
-            ],    
-            label: Some("camera_bind_group_layout"),
-        });    
-        /*let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                }   
-            ],    
-            label: Some("camera_bind_group"),
-        });*/
+        let camera = Camera::new(camera_config, config.width as f32 / config.height as f32, &device);
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        /*let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &time_bind_group_layout],
-                push_constant_ranges: &[],
-            });    
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },    
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),    
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],    
-                compilation_options: Default::default(),
-            }),    
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
-                // or Features::POLYGON_MODE_POINT
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },    
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: texture::Texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(), // 2.
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },    
-            // If the pipeline will be used with a multiview render pass, this
-            // indicates how many array layers the attachments will have.
-            multiview: None,
-            // Useful for optimizing shader compilation on Android
-            cache: None,
-        });    */
-
-        Ok(Self {
+        let mut resources: HashMap<ResourceId, RefCell<Box<dyn Any + 'static>>> = HashMap::new();
+        resources.insert(ResourceId::Wgpu, RefCell::new(Box::new(WgpuResource {
             surface,
-            device,
+            device: Arc::new(device),
             queue,
             config,
-            is_surface_configured: false,
-            //render_pipeline,
-            render_objects: Vec::new(),
-            depth_texture,
-            camera,
-            camera_uniform,
-            camera_buffer,
-            //camera_bind_group,
-            camera_bind_group_layout,
-            camera_controller: CameraController::new(0.05),
-            //vertex_buffer,
-            //index_buffer,
-            //diffuse_texture,
-            //diffuse_bind_group,
-            window,
+            is_surface_configured: false
+        })));
+        resources.insert(ResourceId::Camera, RefCell::new(Box::new(camera)));
+        resources.insert(ResourceId::DepthTexture, RefCell::new(Box::new(depth_texture)));
+        resources.insert(ResourceId::Start, RefCell::new(Box::new(start)));
+        resources.insert(ResourceId::Window, RefCell::new(Box::new(window)));
+        resources.insert(ResourceId::Mouse, RefCell::new(Box::new(MouseData::new())));
+        resources.insert(ResourceId::Keyboard, RefCell::new(Box::new(KeyboardData::new())));
+        resources.insert(ResourceId::Custom(0), RefCell::new(Box::new(CameraController::new(0.05))));
+        resources.insert(ResourceId::Custom(1), RefCell::new(Box::new(time_buffer)));
 
-            start,
-            /*time_bind_group, 
-            time_uniform,*/
-            time_buffer,
-
-            mouse: MouseData::new(),
-            keyboard: KeyboardData::new(),
+        Ok(Self {
+            delta: Instant::now(),
+            world: World::new(),
+            entities: Vec::new(),
+            resources
         })
+    }
+
+    pub fn create_resource<T: 'static>(&mut self, id: ResourceId, value: T) {
+        self.resources.insert(id, RefCell::new(Box::new(value)));
+    }
+    pub fn downcast_resource<T: 'static>(&self, id: &ResourceId) -> Ref<'_, T> {
+        //self.resources.get(id).expect(&format!("x_x :: tried to access nonexistent resource with id {:?}", id))
+        //    .downcast_ref().expect(&format!("x_x :: tried to downcast resource with id {:?} to incorrect type: {}", id, std::any::type_name::<T>()))
+        let cell = self.resources.get(id).expect(&format!("x_x :: tried to access nonexistent resource with id {:?}", id));
+        Ref::map(cell.borrow(), |b| b.downcast_ref::<T>().expect(&format!("x_x :: tried to downcast resource with id {:?} to incorrect type: {}", id, std::any::type_name::<T>())))
+    }
+    pub fn downcast_resource_mut<T: 'static>(&self, id: &ResourceId) -> RefMut<'_, T> {
+        //self.resources.get_mut(id).expect(&format!("x_x :: tried to access nonexistent resource with id {:?}", id))
+        //    .downcast_mut().expect(&format!("x_x :: tried to downcast resource with id {:?} to incorrect type: {}", id, std::any::type_name::<T>()))
+        let cell = self.resources.get(id).expect(&format!("x_x :: tried to access nonexistent resource with id {:?}", id));
+        RefMut::map(cell.borrow_mut(), |b| b.downcast_mut::<T>().expect(&format!("x_x :: tried to downcast resource with id {:?} to incorrect type: {}", id, std::any::type_name::<T>())))
+    }
+    /// you probably dont want this
+    pub fn get_resource(&self, id: &ResourceId) -> Option<&RefCell<Box<dyn Any + 'static>>> {
+        self.resources.get(id)
+    }
+    /// you probably dont want this
+    pub fn get_resource_mut(&mut self, id: &ResourceId) -> Option<&mut RefCell<Box<dyn Any + 'static>>> {
+        self.resources.get_mut(id)
     }
     
     pub fn init(&mut self) {
@@ -288,8 +263,10 @@ impl State {
         /*let time_uniform = TimeUniform {
             time: sstart.elapsed().as_secs_f32()
         };*/
+        //let resource = self.downcast_resource::<wgpu::Buffer>(&ResourceId::Custom(1));
+        let device = self.wgpu().device.clone();
 
-        let time_bind_group_layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let time_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -304,41 +281,45 @@ impl State {
             ],    
             label: Some("time_bind_group_layout"),
         });    
-        let time_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let time_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &time_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.time_buffer.as_entire_binding(),
+                    resource: self.downcast_resource::<wgpu::Buffer>(&ResourceId::Custom(1)).as_entire_binding(),
                 }    
             ],    
             label: Some("time_bind_group"),
         });
-        let mesh1 = mesh::new_cube([0., 0., 0.], &[time_bind_group], &[&time_bind_group_layout], env::current_dir().expect("couldnt get current dir?").join("src/resources/shaders/static_rainbow.wgsl"), self);
-        self.add_render_object(mesh1);
+        let mesh1 = mesh::new_cube([0., 0., 0.], &[time_bind_group], &[&time_bind_group_layout], env::current_dir().expect("couldnt get current dir?").join("src/resources/shaders/static.wgsl"), self);
+        self.entities.push(self.world.spawn((mesh1,)));
         let mesh2 = mesh::new_cube([1.5, 1.5, 1.5], &[], &[], env::current_dir().expect("couldnt get current dir?").join("src/resources/shaders/mesh.wgsl"), self);
-        self.render_objects.push(Box::new(mesh1));
+        self.entities.push(self.world.spawn((mesh2,)));
     }
 
-    pub fn add_render_object(&mut self, obj: impl RenderObject + 'static) {
+    /*pub fn add_render_object(&mut self, obj: impl RenderObject + 'static) {
         self.render_objects.push(Box::new(obj));
-    }
+    }*/
 
     pub fn render_pipeline_layout(&self, bindings: &[&BindGroupLayout]) -> PipelineLayout {
-        self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let device = self.wgpu().device.clone();
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: [&[&self.camera_bind_group_layout], bindings].concat().as_slice(),
+            bind_group_layouts: [&[&self.camera().bind_group_layout], bindings].concat().as_slice(),
             push_constant_ranges: &[],
         })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.is_surface_configured = true;
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            let mut wgpu = self.wgpu_mut();
+            wgpu.is_surface_configured = true;
+            wgpu.config.width = width;
+            wgpu.config.height = height;
+            wgpu.surface.configure(&wgpu.device, &wgpu.config);
+            let t = texture::Texture::create_depth_texture(&wgpu.device, &wgpu.config, "depth_texture");
+            drop(wgpu);
+            self.create_resource(ResourceId::DepthTexture, t);
         }
     }
 
@@ -350,36 +331,48 @@ impl State {
     }
 
     fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera, &self.mouse, &self.keyboard);
-        self.camera_uniform.update_view_proj(&self.camera);
-        //self.time_uniform.time = self.start.elapsed().as_secs_f32();
-        self.queue.write_buffer(&self.time_buffer, 0, bytemuck::cast_slice(&[self.start.elapsed().as_secs_f32()]));
-        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
-        self.mouse.update();
-        self.keyboard.update();
+        println!("delta in ms: {}", self.delta.elapsed().as_millis());
+        {
+            let mut camera = self.camera_mut();
+            let time_buffer = self.downcast_resource::<Buffer>(&ResourceId::Custom(1));
+
+            //let time_buffer = self.downcast_resource_mut::<Buffer>(&ResourceId::Custom(1));
+            let wgpu = self.wgpu_mut();
+            self.downcast_resource_mut::<CameraController>(&ResourceId::Custom(0)).update_camera(&mut camera, &self.mouse(), &self.keyboard());
+            let camera_config = camera.config();
+            camera.uniform.update_view_proj(camera_config);
+            //self.time_uniform.time = self.start.elapsed().as_secs_f32();
+            wgpu.queue.write_buffer(&time_buffer, 0, bytemuck::cast_slice(&[self.start().elapsed().as_secs_f32()]));
+            wgpu.queue.write_buffer(&camera.buffer, 0, bytemuck::cast_slice(&[camera.uniform]));
+            self.mouse_mut().update();
+            self.keyboard_mut().update();
+        }
+        self.delta = Instant::now();
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        self.window.request_redraw();
+        self.window().request_redraw();
+
+        let mut wgpu = self.wgpu_mut();
 
         // We can't render unless the surface is configured
-        if !self.is_surface_configured {
+        if !wgpu.is_surface_configured {
             return Ok(());
         }
         
-        let output = self.surface.get_current_texture()?;
+        let output = wgpu.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
+        let mut encoder = wgpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
 
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -395,7 +388,7 @@ impl State {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture.view,
+                    view: &self.depth_texture().view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -405,19 +398,72 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+
+            for (_, mesh) in self.world.query::<&Mesh>().iter() {
+                pass.set_pipeline(&mesh.shader.render_pipeline);
+                for i in 0..mesh.shader.bind_groups.len() {
+                    pass.set_bind_group(i as u32, &mesh.shader.bind_groups[i], &[]);
+                }
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+            }
             //render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for obj in 0..self.render_objects.len() {
-                self.render_objects[obj].render(&mut render_pass, self);
-            }
+            /*for obj in 0..self.render_objects.len() {
+                self.render_objects[obj].render(&mut render_pass);
+            }*/
             
             //render_pass.set_bind_group(1, &self.time_bind_group, &[]);
         }
 
-        self.queue.submit(iter::once(encoder.finish()));
+        wgpu.queue.submit(iter::once(encoder.finish()));
         output.present();
 
         Ok(())
+    }
+
+    pub fn wgpu(&self) -> Ref<'_, WgpuResource> {
+        self.downcast_resource(&ResourceId::Wgpu)
+    }
+    pub fn camera(&self) -> Ref<'_, Camera> {
+        self.downcast_resource(&ResourceId::Camera)
+    }
+    pub fn depth_texture(&self) -> Ref<'_, Texture> {
+        self.downcast_resource(&ResourceId::DepthTexture)
+    }
+    pub fn window(&self) -> Ref<'_, Arc<Window>> {
+        self.downcast_resource(&ResourceId::Window)
+    }
+    pub fn start(&self) -> Ref<'_, Instant> {
+        self.downcast_resource(&ResourceId::Start)
+    }
+    pub fn mouse(&self) -> Ref<'_, MouseData> {
+        self.downcast_resource(&ResourceId::Mouse)
+    }
+    pub fn keyboard(&self) -> Ref<'_, KeyboardData> {
+        self.downcast_resource(&ResourceId::Keyboard)
+    }
+    pub fn wgpu_mut(&self) -> RefMut<'_, WgpuResource> {
+        self.downcast_resource_mut(&ResourceId::Wgpu)
+    }
+    pub fn camera_mut(&self) -> RefMut<'_, Camera> {
+        self.downcast_resource_mut(&ResourceId::Camera)
+    }
+    pub fn depth_texture_mut(&self) -> RefMut<'_, Texture> {
+        self.downcast_resource_mut(&ResourceId::DepthTexture)
+    }
+    pub fn window_mut(&self) -> RefMut<'_, Arc<Window>> {
+        self.downcast_resource_mut(&ResourceId::Window)
+    }
+    pub fn start_mut(&self) -> RefMut<'_, Instant> {
+        self.downcast_resource_mut(&ResourceId::Start)
+    }
+    pub fn mouse_mut(&self) -> RefMut<'_, MouseData> {
+        self.downcast_resource_mut(&ResourceId::Mouse)
+    }
+    pub fn keyboard_mut(&self) -> RefMut<'_, KeyboardData> {
+        self.downcast_resource_mut(&ResourceId::Keyboard)
     }
 }
 
@@ -511,9 +557,8 @@ impl ApplicationHandler<State> for App {
             Some(canvas) => canvas,
             None => return,
         };
-        state.camera_controller.process_events(&event);
-        state.mouse.window_event(event_loop, window_id, &event);
-        state.keyboard.window_event(event_loop, window_id, &event);
+        state.mouse_mut().window_event(event_loop, window_id, &event);
+        state.keyboard_mut().window_event(event_loop, window_id, &event);
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -524,7 +569,7 @@ impl ApplicationHandler<State> for App {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        let size = state.window.inner_size();
+                        let size = state.window().inner_size();
                         state.resize(size.width, size.height);
                     }
                     Err(e) => {
@@ -560,11 +605,20 @@ impl ApplicationHandler<State> for App {
             Some(canvas) => canvas,
             None => return,
         };
-        state.mouse.device_event(event_loop, device_id, &event);
+        state.mouse_mut().device_event(event_loop, device_id, &event);
     }
 }
 
+fn assert_send_sync<T: Send + Sync + 'static>() {
+    println!("send and sync? {:?}", TypeId::of::<T>())
+}
+fn assert_component<T: Component>() {
+    println!("component? {:?}", TypeId::of::<T>())
+}
+
 pub fn run() -> anyhow::Result<()> {
+    assert_send_sync::<wgpu::Buffer>();
+    assert_component::<wgpu::Buffer>();
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();

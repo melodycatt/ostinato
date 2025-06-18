@@ -45,20 +45,20 @@ impl MouseData {
 
     pub fn window_event(        
         &mut self,
-        event_loop: &ActiveEventLoop,
+        _event_loop: &ActiveEventLoop,
         _window_id: winit::window::WindowId,
         event: &WindowEvent,
     ) {
         match event {
-            WindowEvent::CursorEntered { device_id } => self.cursor_inside = true,
-            WindowEvent::CursorLeft { device_id } => self.cursor_inside = false,
-            WindowEvent::MouseInput { device_id, state, button } => {
+            WindowEvent::CursorEntered { device_id: _ } => self.cursor_inside = true,
+            WindowEvent::CursorLeft { device_id: _ } => self.cursor_inside = false,
+            WindowEvent::MouseInput { device_id: _, state, button } => {
                 match state {
                     ElementState::Pressed => self.pressed.insert(*button),
                     ElementState::Released => self.pressed.remove(button),
                 };
             },
-            WindowEvent::MouseWheel { device_id, delta, phase } => {
+            WindowEvent::MouseWheel { device_id: _, delta, phase: _ } => {
                 match delta {
                     MouseScrollDelta::LineDelta(x, y) => { self.scroll_delta += <(f64, f64) as Into<Vector2<f64>>>::into((*x as f64, *y as f64)) * 20.0; },
                     MouseScrollDelta::PixelDelta(pos) => { self.scroll_delta += <(f64, f64) as Into<Vector2<f64>>>::into((pos.x, pos.y)); }
@@ -70,12 +70,12 @@ impl MouseData {
 
     pub fn device_event(
             &mut self,
-            event_loop: &ActiveEventLoop,
-            device_id: DeviceId,
+            _event_loop: &ActiveEventLoop,
+            _device_id: DeviceId,
             event: &DeviceEvent,
         ) {
         match event {
-            DeviceEvent::MouseMotion{ delta } => { println!("!!!"); self.delta += (*delta).into() },
+            DeviceEvent::MouseMotion{ delta } => self.delta += (*delta).into(),
             _ => {}
             //DeviceEvent::MouseWheel { delta }
         }

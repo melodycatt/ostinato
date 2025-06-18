@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, ColorTargetState, Device, PipelineLayout, RenderPass, RenderPipeline, ShaderModule, TextureFormat, VertexBufferLayout};
+use wgpu::{BindGroup, ColorTargetState, Device, PipelineLayout, RenderPipeline, ShaderModule, TextureFormat, VertexBufferLayout};
 
 use crate::texture;
 

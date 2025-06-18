@@ -14,3 +14,5 @@ wgpu = "25.0.2"
 winit = "0.30.11"
 vectors = {path="../vectors"}
 cgmath = "0.18.0"
+hecs = "0.10.5"
+indexmap = "2.9.0"
