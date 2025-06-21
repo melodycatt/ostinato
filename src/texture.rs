@@ -1,8 +1,10 @@
 use anyhow::*;
 use image::GenericImageView;
 
-#[allow(dead_code)]
+use crate::resources::Resource;
 
+#[allow(dead_code)]
+#[derive(Debug)]
 pub struct Texture {
     #[allow(unused)]
     pub texture: wgpu::Texture,
@@ -122,5 +124,24 @@ impl Texture {
         );
 
         Self { texture, view, sampler }
+    }
+}
+
+impl Resource for Texture {
+    /// for clarity, `binding()` is not implemented for Texture.
+    /// instead, you have to call it individually on the `view` and `sampler` fields
+    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
+        Err(anyhow!("x_x :: tried to get a BindingResource from a texture. did you mean to call `.texture.binding()`?"))
+    }
+}
+
+impl Resource for wgpu::TextureView {
+    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
+        Ok(wgpu::BindingResource::TextureView(self))
+    }
+}
+impl Resource for wgpu::Sampler {
+    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
+        Ok(wgpu::BindingResource::Sampler(self))
     }
 }

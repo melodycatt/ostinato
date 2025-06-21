@@ -6,8 +6,12 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_co
     cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
 
+use std::sync::Arc;
+
 use cgmath::{One, Point3, Quaternion, Vector3};
 use wgpu::{util::DeviceExt, Device};
+
+use crate::resources::Resource;
 
 macro_rules! derive_camera_matrix {
     ($struct:ident) => {
@@ -29,6 +33,7 @@ pub trait CameraMatrix {
     fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32>;
 }
 
+#[derive(Debug)]
 pub struct Camera {
     pub eye: Point3<f32>,
     pub rotation: Quaternion<f32>,
@@ -40,7 +45,7 @@ pub struct Camera {
     pub uniform: CameraUniform,
     pub buffer: wgpu::Buffer,
     //camera_bind_group: wgpu::BindGroup,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group_layout: Arc<wgpu::BindGroupLayout>,
 //    pub camera_controller: CameraController,
 }
 
@@ -118,11 +123,17 @@ impl Camera {
             zfar: config.zfar,
             uniform: camera_uniform,
             buffer: camera_buffer,
-            bind_group_layout: camera_bind_group_layout
+            bind_group_layout: Arc::new(camera_bind_group_layout)
         }
     }
     pub fn config(&self) -> CameraData {
         CameraData { eye: self.eye, rotation: self.rotation, aspect: self.aspect, fovy: self.fovy, znear: self.znear, zfar: self.zfar }
+    }
+}
+
+impl Resource for Camera {
+    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
+        Ok(self.buffer.as_entire_binding())
     }
 }
 

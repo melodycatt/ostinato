@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
+use crate::Resource;
 use vectors::Vector2;
 use winit::{event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent}, event_loop::ActiveEventLoop};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 pub struct MouseData {
     // mouse delta over one frame, in pixels
     pub delta: Vector2<f64>,

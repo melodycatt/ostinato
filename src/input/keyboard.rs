@@ -1,8 +1,8 @@
 use std::collections::HashSet;
-
+use crate::Resource;
 use winit::{event::{DeviceEvent, DeviceId, ElementState, WindowEvent}, event_loop::ActiveEventLoop, keyboard::PhysicalKey};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 pub struct KeyboardData {
     // pressed keys
     pressed: HashSet<PhysicalKey>,

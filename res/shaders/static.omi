@@ -1,0 +1,16 @@
+bind_groups:
+  - preset: CAMERA
+  - label: time
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
+        resource: buffer::time
+buffers:
+  - COLOR_VERTEX

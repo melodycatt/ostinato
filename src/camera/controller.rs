@@ -1,10 +1,12 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use cgmath::{Quaternion, Rad, Rotation3, Vector3};
+use crate::Resource;
 use winit::{keyboard::{KeyCode}};
 
 use crate::{camera::{Camera}, input::{keyboard::KeyboardData, mouse::MouseData}};
 
+#[derive(Debug, Resource)]
 pub struct CameraController {
     pub speed: f32,
     pub pitch: f32,

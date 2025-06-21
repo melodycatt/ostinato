@@ -1,0 +1,4 @@
+bind_groups:
+  - preset: CAMERA
+buffers:
+  - COLOR_VERTEX
