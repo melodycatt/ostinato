@@ -1,0 +1,6 @@
+objects:
+  - index: 0
+    material_index: 1
+materials:
+  - bathroom/red
+  - bathroom/blue

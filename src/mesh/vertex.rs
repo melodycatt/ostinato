@@ -145,7 +145,7 @@ impl Vertex for ModelVertex {
                 wgpu::VertexAttribute {
                     offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
             ],
         }

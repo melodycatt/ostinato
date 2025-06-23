@@ -1,9 +1,8 @@
-use std::{any::Any, cell::{BorrowMutError, RefCell}, fmt::Debug, fs, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
+use std::{any::Any, cell::RefMut, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 
 use anyhow::{anyhow, Error};
-use as_any::AsAny;
 use serde_yaml::Value;
-use wgpu::{util::DeviceExt, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, MultisampleState, PrimitiveState, RenderPipelineDescriptor, VertexState};
 
 extern crate alloc;
 
@@ -85,9 +84,9 @@ pub async fn load_shader(
     state: &mut State
 ) -> anyhow::Result<ResourceId> {
     let f = format!("material::{file_name}");
-    let id = f.into();
-    let existing = state.resources.contains_key(&id);
-    let device = state.wgpu().device.clone();
+    let id: ResourceId = f.into();
+    let existing = state.resources.contains_key(&id.key().unwrap());
+    let device = state.graphics().device.clone();
     if existing {
         return Ok(id);
     } else {
@@ -338,22 +337,21 @@ pub async fn load_shader(
                     entries: &entries
                 });
                 println!("{:#?}", entries);
-                let resources: Vec<_> = resource_labels.into_iter()
-                    .map(|x| { println!("{:?} {:?}", x, Into::<ResourceId>::into(&*x)); state.get_resource(&(*x).into()).ok_or(anyhow!("x_x :: invalid OMI yaml! resource {} does not exist", x)) })
-                    .collect::<Result<Vec<&RefCell<Box<dyn Resource + 'static>>>, _>>()?
+                let binding = resource_labels.into_iter()
+                    .map(|x| { println!("{:?} {:?}", x, Into::<ResourceId>::into(&*x)); state.get_resource_mut(&(*x).into()).map_err(|e| anyhow!("x_x :: invalid OMI yaml! when parsing {x}: {}", e.to_string())) })
+                    .collect::<Result<Vec<RefMut<Box<dyn Resource + 'static>>>, _>>()?;
+                let resources: Vec<_> = binding
                     .iter()
                     .enumerate()
                     .map(|(i, x)| {
-                        x.try_borrow_mut().map_err(|_| anyhow!("x_x :: tried to load a material with a resource that was already borrowed mutably in one of its bind groups"))?;
-                        let raw = x.as_ptr() as *const Box<dyn Resource>;
+                        //x.try_borrow_mut().map_err(|_| anyhow!("x_x :: tried to load a material with a resource that was already borrowed mutably in one of its bind groups"))?;
+                        //let raw = *x as *const Box<dyn Resource>;
                        //println!()
-                        unsafe { 
-                            let resource = &*raw;
-                            Ok::<_, anyhow::Error>(BindGroupEntry {
-                                binding: i as u32,
-                                resource: resource.binding()?
-                            })
-                        }
+                        let resource = x;
+                        Ok::<_, anyhow::Error>(BindGroupEntry {
+                            binding: i as u32,
+                            resource: resource.binding()?
+                        })
                     })
                     .collect::<Result<Vec<BindGroupEntry<'_>>, _>>()?;
                 bind_groups.push(device.create_bind_group(&BindGroupDescriptor {
@@ -365,34 +363,136 @@ pub async fn load_shader(
             }
 
         }
-        let buffers_yaml = parse_yaml!(root.get("buffers"), as_sequence, "buffers");
-        let mut buffers = Vec::with_capacity(buffers_yaml.len());
-        for i in buffers_yaml {
-            let x = i.as_str().ok_or(anyhow!("x_x :: invalid OMI yaml! invalid value `buffers`"))?;
-            buffers.push(mesh::desc_from_name(x)?);
+        let mut buffers = Vec::new();
+        if let Some(byml) = root.get("buffers") {
+            let buffers_yaml = byml.as_sequence().ok_or(anyhow!("x_x :: invalid OMI yaml! field `buffers` is invalid"))?;
+            buffers = Vec::with_capacity(buffers_yaml.len());
+            for i in buffers_yaml {
+                let x = i.as_str().ok_or(anyhow!("x_x :: invalid OMI yaml! invalid value `buffers`"))?;
+                buffers.push(mesh::desc_from_name(x)?);
+            }
         }
-        println!("{}", format!("{file_name}.wgsl"));
-        let f = load_string(&format!("{file_name}.wgsl")).await?;//.expect("shader non existent in loading material");
-        let descriptor = wgpu::ShaderModuleDescriptor {
-            label: Some(file_name),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&f)),
-        };
-        // include_wgsl!()
-        let shader = device.create_shader_module(descriptor);
 
         let layouts: Vec<_> = bind_group_layouts.iter().map(|arc| arc.as_ref()).collect();
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some(file_name),
             bind_group_layouts: &layouts,
             push_constant_ranges: &[],
         });
+        
+        let entry_points = unwrap_yaml!(root.get("entry_points"), "entry_points");
+        let vert = unwrap_yaml!(entry_points.get("vertex"), "vertex");
+        let frag = unwrap_yaml!(entry_points.get("fragment"), "fragment");
+        let (vert_name, vert_fn) = (
+            parse_yaml!(vert.get("module"), as_str, "vertex.module"),
+            parse_yaml!(vert.get("function"), as_str, "vertex.function"),
+        );
+        let (frag_name, frag_fn) = (
+            parse_yaml!(frag.get("module"), as_str, "fragment.module"),
+            parse_yaml!(frag.get("function"), as_str, "fragment.function"),
+        );
 
-        println!("{:?}", pipeline_layout);
+        let vert_text = load_string(&vert_name).await?;//.expect("shader non existent in loading material");
+        let frag_text = load_string(&frag_name).await?;//.expect("shader non existent in loading material");
+        println!("{}", format!("{file_name}.wgsl"));
+        let vert_descriptor = wgpu::ShaderModuleDescriptor {
+            label: Some(vert_name),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&vert_text)),
+        };
+        let vert_shader = device.create_shader_module(vert_descriptor);
+        let pipeline = if frag_name == vert_name {
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some(file_name),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &vert_shader,
+                    entry_point: Some(vert_fn),
+                    compilation_options: Default::default(),
+                    buffers: &buffers
+                },
+                fragment: Some(FragmentState {
+                    module: &vert_shader,
+                    entry_point: Some(frag_fn),
+                    compilation_options: Default::default(),
+                    targets: &[Some(mesh::Material::screen_target(state.graphics().config.format))]
+                }),
+                primitive: PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: texture::Texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None
+            })
+        } else {
+            let frag_descriptor = wgpu::ShaderModuleDescriptor {
+                label: Some(frag_name),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&frag_text)),
+            };
+            let frag_shader = device.create_shader_module(frag_descriptor);
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some(file_name),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &vert_shader,
+                    entry_point: Some(vert_fn),
+                    compilation_options: Default::default(),
+                    buffers: &buffers
+                },
+                fragment: Some(FragmentState {
+                    module: &frag_shader,
+                    entry_point: Some(frag_fn),
+                    compilation_options: Default::default(),
+                    targets: &[Some(mesh::Material::screen_target(state.graphics().config.format))]
+                }),
+                primitive: PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: texture::Texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None
+            })
+        };
+        // include_wgsl!()
+
+        //println!("{:?}", pipeline_layout);
         //println!("{:?}", layouts);
 
 
-        let material = Material::new(shader, bind_groups, pipeline_layout, &buffers, &[Some(mesh::Material::screen_target(state.wgpu().config.format))], &device);
+        let material = Material::with_pipeline(pipeline, pipeline_layout, bind_groups);
         state.create_resource(format!("material::{file_name}").into(), material);
 
         return Ok(format!("material::{file_name}").into())
@@ -453,7 +553,7 @@ pub async fn load_model(
     //layout: &wgpu::BindGroupLayout,
     state: &mut State
 ) -> anyhow::Result<mesh::Model> {
-    let device = state.wgpu().device.clone();
+    //let device = state.graphics().device.clone();
     //let queue = &wgpu.queue;
 
     let obj_text = load_string(&format!("{file_name}.obj")).await?;
@@ -462,16 +562,19 @@ pub async fn load_model(
     let omtl_text = load_string(&format!("{file_name}.omtl")).await?;
     let omtl_yaml: Value = serde_yaml::from_str(&omtl_text)?;
     println!("!!");
-    let omi_names = omtl_yaml.get("materials").ok_or(Error::msg("AAA"))?.as_sequence().ok_or(Error::msg("AAA"))?;
+    let omi_names = parse_yaml!(omtl_yaml.get("materials"), as_sequence, "materials");
+    let omi_index = parse_yaml!(omtl_yaml.get("objects"), as_sequence, "materials");
     let omis: Vec<&str> = omi_names.iter().map(|x| x.as_str().unwrap()).collect();
+    let mut mids = Vec::with_capacity(omis.len());
     for i in omis {
-        load_shader(i, state).await?;
+        mids.push(load_shader(i, state).await?);
     }
 
-    let (models, obj_materials) = tobj::load_obj_buf_async(
+    let (models, _) = tobj::load_obj_buf_async(
         &mut obj_reader,
         &tobj::GPU_LOAD_OPTIONS,
         |p| async move {
+            //println!("{p}");
             let mat_text = load_string(&p).await.unwrap();
             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
         },
@@ -506,6 +609,7 @@ pub async fn load_model(
     let meshes = models
         .into_iter()
         .map(|m| {
+            //println!("{m:#?}");
                 let vertices = (0..m.mesh.positions.len() / 3)
                 .map(|i| {
                     if m.mesh.normals.is_empty(){
@@ -515,7 +619,7 @@ pub async fn load_model(
                                 m.mesh.positions[i * 3 + 1],
                                 m.mesh.positions[i * 3 + 2],
                             ],
-                            tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
+                            tex_coords: [m.mesh.texcoords[i * 2], m.mesh.texcoords[i * 2 + 1]],
                             normal: [0.0, 0.0, 0.0],
                         }
                     }else{
@@ -536,7 +640,7 @@ pub async fn load_model(
                 })
                 .collect::<Vec<_>>();
 
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            /*let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{:?} Vertex Buffer", file_name)),
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
@@ -545,9 +649,9 @@ pub async fn load_model(
                 label: Some(&format!("{:?} Index Buffer", file_name)),
                 contents: bytemuck::cast_slice(&m.mesh.indices),
                 usage: wgpu::BufferUsages::INDEX,
-            });
+            });*/
 
-            mesh::Mesh::new(vertices, m.mesh.indices, "guh?", Some(file_name.to_string()), state)
+            mesh::Mesh::new(vertices, m.mesh.indices, mids[m.mesh.material_id.unwrap_or(0)], Some(file_name.to_string()), state)
         })
         .collect::<Vec<_>>();
 

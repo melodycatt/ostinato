@@ -32,7 +32,7 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn new<T: Vertex+Debug>(verts: impl Into<Vec<T>>, indices: impl Into<Vec<u32>>, shader: impl Into<ResourceId>, name: Option<String>, state: &State) -> Self {
-        let device = state.wgpu().device.clone();
+        let device = state.graphics().device.clone();
         let verts = verts.into();
         let indices = indices.into();
         //println!("{:?}", verts);

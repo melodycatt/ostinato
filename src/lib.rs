@@ -1,7 +1,4 @@
-//#![feature(min_specialization)]
-//#![feature(hint_must_use)]
-//#![feature(liballoc_internals)]
-
+#![feature(duration_millis_float)]
 use std::{any::{Any, TypeId}, cell::{Ref, RefCell, RefMut}, collections::HashMap, hash::Hash, iter,  sync::Arc, time::Instant};
 
 pub use derive_resource::Resource;
@@ -10,6 +7,7 @@ use anyhow::anyhow;
 use as_any::AsAny;
 use cgmath::{One, Quaternion};
 use hecs::{Component, Entity, World};
+use nohash_hasher::BuildNoHashHasher;
 use wgpu::{util::DeviceExt, BindGroupLayout, Buffer, PipelineLayout};
 use winit::{
     application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
@@ -18,7 +16,7 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{camera::{controller::CameraController, Camera, CameraConfig, CameraUniform}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{ColorVertex, Material, Mesh, TextureVertex, Vertex}, resources::Resource, texture::Texture};
+use crate::{camera::{controller::CameraController, Camera, CameraConfig}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{Material, Mesh}, resources::{load_shader, load_texture, Resource}, texture::Texture};
 
 pub mod texture;
 pub mod mesh;
@@ -40,41 +38,25 @@ pub struct ResolutionUniform {
     res: [f32; 2],
 }
 
-/*pub struct Context {
-    pub surface: wgpu::Surface<'static>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
-    pub is_surface_configured: bool,
-    //render_pipeline: wgpu::RenderPipeline,
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable, Resource)]
+struct RaymarchUniform {
+    time: f32, // time in secs (?)
+    delta: f32, // delta in ms
+    res: [f32; 2], // screen resolution
+}
 
-    pub depth_texture: texture::Texture,
-
-    pub camera: Camera,
-    pub camera_uniform: CameraUniform,
-    pub camera_buffer: wgpu::Buffer,
-    //camera_bind_group: wgpu::BindGroup,
-    pub camera_bind_group_layout: wgpu::BindGroupLayout,
-    pub camera_controller: CameraController,
-
-    pub start: Instant,
-    /*time_bind_group: wgpu::BindGroup,
-    pub time_uniform: TimeUniform,*/
-    pub time_buffer: wgpu::Buffer,
-    //vertex_buffer: wgpu::Buffer,
-    //index_buffer: wgpu::Buffer,
-    // NEW!
-    //#[allow(dead_code)]
-    // diffuse_texture: texture::Texture,
-    // diffuse_bind_group: wgpu::BindGroup,
-    pub window: Arc<Window>,
-
-    pub mouse: MouseData,
-    pub keyboard: KeyboardData
-}*/
-
+/// the state.
+/// this contains everything you'll need (probably)
+/// dont access the `RefCell` fields directly, use their corresponding methods
 pub struct State {
-    delta: Instant,
+    graphics: RefCell<Box<dyn Resource>>,
+    start: RefCell<Box<dyn Resource>>,
+    delta: RefCell<Box<dyn Resource>>,
+    mouse: RefCell<Box<dyn Resource>>,
+    keyboard: RefCell<Box<dyn Resource>>,
+    camera: RefCell<Box<dyn Resource>>,
+
     world: World,
     entities: Vec<Entity>,
     /// im not gonna stop you from mutating core resources
@@ -89,75 +71,74 @@ pub struct State {
     /// i dont know how you would have 4 billion resources.
     /// 
     /// RESOURCES ARE NOT MEANT FOR ENTITIES!
-    /// 
-    /// Resource Id Reservations:
-    /// 1XXXX: Materials
-    /// 
-    pub resources: HashMap<ResourceId, RefCell<Box<dyn Resource>>>,
+    // i dont know why this is pub. ill leave it there for now but i dont think this should be pub
+    pub resources: HashMap<u64, RefCell<Box<dyn Resource>>, BuildNoHashHasher<u64>>,
     //resource_labels: HashMap<&'static str, ResourceId>,
 }
 
-/// if youre mad about the nested resource types
-/// stay mad.
-/// it would be so much worse if we had them all in one enum
-/// then it would either be unclear what each is without docs (bad)
-/// or we prefix every variant with relevant info (eg. ResourceId::WgpuSurface) (also bad)
-/// actually maybe that last one aint THAT bad but TOO LATE LOL
+/// `ResourceId`s are for accessing resources.
+/// for the core resources (id's without associated `u64`s), access is faster
+/// as it does not require a hashmap lookup
+const MATERIAL_TAG: u64 = 0x1000_0000_0000_0000;
+const BUFFER_TAG:   u64 = 0x2000_0000_0000_0000;
+const CUSTOM_TAG:   u64 = 0x3000_0000_0000_0000;
+const TAG_MASK:     u64 = 0xF000_0000_0000_0000;
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ResourceId {
     Invalid,
 
-    Wgpu,
+    GraphicsContext,
     Camera,
-    DepthTexture,
-    Window,
     Start,
+    Delta,
     Mouse,
     Keyboard,
     Material(u64),
     Buffer(u64),
     Custom(u64),
 }
-/*#[repr(usize)]
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub enum ResourceIdType {
-    Material,
-    Buffer,
-    Custom
-}
-impl ResourceIdType {
-    fn into_id(self, id: &str) -> ResourceId {
-        match self {
-            ResourceIdType::Material => ResourceId::Material(id.into()),
-            ResourceIdType::Buffer => ResourceId::Buffer(id.into()),
-            ResourceIdType::Custom => ResourceId::Custom(id.into()),
-        }
-    }
-}*/
 impl ResourceId {
     fn hash_str(s: &str) -> u64 {
         Self::hash(s.to_owned())
     }
     fn hash(s: String) -> u64 {
         use std::hash::{Hasher, DefaultHasher};
-        println!("hashing {s}");
+        //println!("hashing {s}");
         let mut hasher = DefaultHasher::new();
         s.hash(&mut hasher);
         return hasher.finish()
+    }
+
+    pub fn key(&self) -> Option<u64> {
+        match self {
+            ResourceId::Material(id) => Some(MATERIAL_TAG | (id & !TAG_MASK)),
+            ResourceId::Buffer(id)   => Some(BUFFER_TAG   | (id & !TAG_MASK)),
+            ResourceId::Custom(id)   => Some(CUSTOM_TAG   | (id & !TAG_MASK)),
+            _ => None,
+        }
+    }
+
+    pub fn from_key(key: u64) -> ResourceId {
+        match key & TAG_MASK {
+            MATERIAL_TAG => ResourceId::Material(key & !TAG_MASK),
+            BUFFER_TAG   => ResourceId::Buffer(key & !TAG_MASK),
+            CUSTOM_TAG   => ResourceId::Custom(key & !TAG_MASK),
+            _            => ResourceId::Invalid, // or panic
+        }
     }
 }
 impl From<String> for ResourceId {
     fn from(s: String) -> Self {
         match s.as_str() {
-            "core::wgpu" => ResourceId::Wgpu,
+            "core::wgpu" | "core::graphics" | "core::gctx" => ResourceId::GraphicsContext,
             "core::camera" => ResourceId::Camera,
-            "core::depth_texture" => ResourceId::DepthTexture,
-            "core::window" => ResourceId::Window,
             "core::start" => ResourceId::Start,
-            "core::mouse" => ResourceId::Mouse,
-            "core::keyboard" => ResourceId::Keyboard,
+            "core::delta" => ResourceId::Start,
+            "core::mouse" | "core::mouse_data" => ResourceId::Mouse,
+            "core::keyboard" | "core::keyboard_data" => ResourceId::Keyboard,
+            _ if s.starts_with("core::") => ResourceId::Invalid,
             _ if s.starts_with("buffer::") => ResourceId::Buffer(Self::hash(s)),
-            _ if s.starts_with("material::") => ResourceId::Material(Self::hash(s)),
+            _ if s.starts_with("material::") => { println!("{s}"); ResourceId::Material(Self::hash(s)) },
             _ => ResourceId::Custom(Self::hash(s)),
         }
     }
@@ -165,91 +146,30 @@ impl From<String> for ResourceId {
 impl From<&str> for ResourceId {
     fn from(s: &str) -> Self {
         match s {
-            "core::wgpu" => ResourceId::Wgpu,
+            "core::wgpu" | "core::graphics" | "core::gctx" => ResourceId::GraphicsContext,
             "core::camera" => ResourceId::Camera,
-            "core::depth_texture" => ResourceId::DepthTexture,
-            "core::window" => ResourceId::Window,
             "core::start" => ResourceId::Start,
-            "core::mouse" => ResourceId::Mouse,
-            "core::keyboard" => ResourceId::Keyboard,
+            "core::delta" => ResourceId::Start,
+            "core::mouse" | "core::mouse_data" => ResourceId::Mouse,
+            "core::keyboard" | "core::keyboard_data" => ResourceId::Keyboard,
+            _ if s.starts_with("core::") => ResourceId::Invalid,
             _ if s.starts_with("buffer::") => ResourceId::Buffer(Self::hash_str(s)),
-            _ if s.starts_with("material::") => ResourceId::Material(Self::hash_str(s)),
+            _ if s.starts_with("material::") => { println!("{s}"); ResourceId::Material(Self::hash_str(s)) },
             _ => ResourceId::Custom(Self::hash_str(s)),
         }
     }
 }
 
-/*#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub enum WgpuResource {
-    Surface,
-    Device,
-    Queue,
-    Config,
-    IsSurfaceConfigured
-}*/
 #[derive(Debug, Resource)]
-pub struct WgpuResource {
+pub struct GraphicsContext {
     pub surface: wgpu::Surface<'static>,
     pub device: Arc<wgpu::Device>,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub is_surface_configured: bool,
+    pub depth_texture: Texture,
+    pub window: Arc<Window>
 }
-// this will need to change if i want multiple cameras
-/*#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub enum CameraResource {
-    Camera,
-    Uniform,
-    Buffer,
-    BindGroupLayout,
-    // get rid of this, just make it a system
-    // put the controller logic into a state method that can be called by the user
-    // (unused by the engine)
-    Controller,
-}*/
-
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }impl Resource for MouseData {
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }impl Resource for KeyboardData {
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }impl Resource for Arc<Window> {
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }impl Resource for CameraController {
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }impl Resource for WgpuResource {
-//     fn as_any(&self) -> &dyn std::any::Any {
-//         self
-//     }
-//     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-//         self
-//     }
-// }
 
 impl State {
     /// makes a new state! self.init() will be called immediately after this
@@ -294,22 +214,6 @@ impl State {
             .await
             .unwrap();
 
-        let time_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Time Buffer"),
-                contents: bytemuck::cast_slice(&[start.elapsed().as_secs_f32()]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }    
-        );    
-        let res =  window.inner_size().cast::<f32>().into();
-        let res_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Time Buffer"),
-                contents: bytemuck::cast_slice(&[ResolutionUniform { res }]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }    
-        );    
-
         let surface_caps = surface.get_capabilities(&adapter);
 
         let surface_format = surface_caps
@@ -332,6 +236,7 @@ impl State {
         window.set_cursor_visible(false);
         window.set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
 
+        // TODO: let user set initial cameraconfig (maybe)
         let camera_config = CameraConfig {
             eye: (0.0, 0.0, 2.0).into(),
             rotation: Quaternion::one(),
@@ -344,33 +249,32 @@ impl State {
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        //let st_texture_bytes = include_bytes!("resources/shaders/ichannel0.png");
-        //let st_texture = Texture::from_bytes(&device, &queue, st_texture_bytes, "ichannel0 texture")?;
-
-        let mut resources: HashMap<ResourceId, RefCell<Box<dyn Resource + 'static>>> = HashMap::new();
-        resources.insert(ResourceId::Wgpu, RefCell::new(Box::new(WgpuResource {
+        let resources: HashMap<u64, RefCell<Box<dyn Resource + 'static>>, BuildNoHashHasher<u64>> = HashMap::with_hasher(BuildNoHashHasher::<u64>::new());
+        let graphics = GraphicsContext {
             surface,
             device: Arc::new(device),
             queue,
             config,
-            is_surface_configured: false
-        })));
-        resources.insert(ResourceId::Camera, RefCell::new(Box::new(camera)));
-        resources.insert(ResourceId::DepthTexture, RefCell::new(Box::new(depth_texture)));
-        resources.insert(ResourceId::Start, RefCell::new(Box::new(start)));
-        resources.insert(ResourceId::Window, RefCell::new(Box::new(window)));
-        resources.insert(ResourceId::Mouse, RefCell::new(Box::new(MouseData::new())));
-        resources.insert(ResourceId::Keyboard, RefCell::new(Box::new(KeyboardData::new())));
-        resources.insert("camera_controller".into(), RefCell::new(Box::new(CameraController::new(0.05))));
-        resources.insert("buffer::time".into(), RefCell::new(Box::new(time_buffer)));
-        resources.insert("buffer::res".into(), RefCell::new(Box::new(res_buffer)));
-        //resources.insert(ResourceId::Custom(3), RefCell::new(Box::new(st_texture)));
+            is_surface_configured: false,
+            depth_texture,
+            window: window
+        };
+        //resources.insert(ResourceId::Camera, RefCell::new(Box::new(camera)));
+        // resources.insert(ResourceId::Start, RefCell::new(Box::new(start)));
+        // resources.insert(ResourceId::Mouse, RefCell::new(Box::new(MouseData::new())));
+        // resources.insert(ResourceId::Keyboard, RefCell::new(Box::new(KeyboardData::new())));
 
         Ok(Self {
-            delta: Instant::now(),
             world: World::new(),
             entities: Vec::new(),
             resources,
+            
+            delta: RefCell::new(Box::new(Instant::now()) as Box<dyn Resource>),
+            start: RefCell::new(Box::new(start) as Box<dyn Resource>),
+            camera: RefCell::new(Box::new(camera) as Box<dyn Resource>),
+            graphics: RefCell::new(Box::new(graphics) as Box<dyn Resource>),
+            mouse: RefCell::new(Box::new(MouseData::new()) as Box<dyn Resource>),
+            keyboard: RefCell::new(Box::new(KeyboardData::new()) as Box<dyn Resource>),
         })
     }
 
@@ -380,38 +284,42 @@ impl State {
     /// T must not have a custom implementation of `binding()` that does not return an error.
     /// this function doesn't check if this is the case, but if you load the material it will panic
     pub fn create_resource<T: Resource>(&mut self, id: ResourceId, value: T) {
-        self.resources.insert(id, RefCell::new(Box::new(value)));
+        println!("{id:?}");
+        self.resources.insert(id.key().expect("x_x :: tried to create invalid resource key"), RefCell::new(Box::new(value)));
     }
 
-    /// panics if the resource doesn't exist
+    /// borrows the refcell, upcasts its insides to a `dyn Any`, downcasts it to T
+    /// panics if the resource doesnt exist, or is not a T
     pub fn downcast_resource<T: Resource + 'static>(&self, id: &ResourceId) -> Ref<'_, T> {
-        //println!("{id:?} is camera_controller? {}", id == &"pretendthisresourceexists".into());
-        let cell = self.resources.get(id).expect(&format!("x_x :: tried to downcast nonexistent resource with id: {:?}", id));
-        let borrow = cell.borrow();
-        std::cell::Ref::map(borrow, |b| {
+        // get cell
+        let cell = self.get_resource(id).expect(&format!("x_x :: tried to downcast nonexistent resource with id: {:?}", id));
+        // we map because you cant get a `Ref` to something inside an already borrowed `Ref`
+        // this lets you do that
+        std::cell::Ref::map(cell, |b| {
+            // cast to any first, because it doesnt know how to dispatch for some reason
             let any = b.as_ref() as &dyn Any;
+            // downcast!
             any.downcast_ref::<T>().expect(&format!("x_x :: tried to downcast resource with id {:?} to wrong type: {:?}", id, std::any::type_name::<T>()))
         })
     }
 
-    /// panics if the resource doesn't exist
+    /// borrows the refcell, upcasts its insides to a `dyn Any`, downcasts it to T
+    /// panics if the resource does not exist, or is not a T
     pub fn downcast_resource_mut<T: Resource + 'static>(&self, id: &ResourceId) -> RefMut<'_, T> {
-        //println!("{id:?} is camera_controller? {}", id == &"camera_controller".into());
-        let cell = self.resources.get(id).expect(&format!("x_x :: tried to downcast_mut nonexistent resource with id: {:?}", id));
-        let borrow = cell.borrow_mut();
-        std::cell::RefMut::map(borrow, |b| {
+        let cell = self.get_resource_mut(id).expect(&format!("x_x :: tried to downcast_mut nonexistent resource with id: {:?}", id));
+        std::cell::RefMut::map(cell, |b| {
             let any = b.as_mut() as &mut dyn Any;
             any.downcast_mut::<T>().expect(&format!("x_x :: tried to downcast_mut resource with id {:?} to wrong type: {:?}", id, std::any::type_name::<T>()))
         })
     }
 
-    /// returns an error if the resource doesnt exist or is the wrong type
+    /// borrows the refcell, upcasts its insides to a `dyn Any`, downcasts it to T
+    /// returns an error if the resource doesnt exist, or is not a T
     pub fn try_downcast_resource<T: Resource + 'static>(&self, id: &ResourceId) -> anyhow::Result<Ref<'_, T>> {
-        let cell = self.resources
-            .get(id)
-            .ok_or_else(|| anyhow!("x_x :: tried to access nonexistent resource with id {:?}", id))?;
+        let cell = self
+            .get_resource(id)?;
 
-        Ref::filter_map(cell.borrow(), |boxed| boxed.as_any().downcast_ref::<T>())
+        Ref::filter_map(cell, |boxed| boxed.as_any().downcast_ref::<T>())
             .map_err(|_| anyhow!(
                 "x_x :: tried to downcast resource with id {:?} to incorrect type: {}",
                 id,
@@ -419,13 +327,13 @@ impl State {
             ))
     }
 
-    /// returns an error if the resource doesnt exist or is the wrong type
+    /// borrows the refcell, upcasts its insides to a `dyn Any`, downcasts it to T
+    /// returns an error if the resource doesnt exist, or is not a T
     pub fn try_downcast_resource_mut<T: Resource + 'static>(&self, id: &ResourceId) ->  anyhow::Result<RefMut<'_, T>> {
-        let cell = self.resources
-            .get(id)
-            .ok_or_else(|| anyhow!("x_x :: tried to access nonexistent resource with id {:?}", id))?;
+        let cell = self
+            .get_resource_mut(id)?;
 
-        RefMut::filter_map(cell.borrow_mut(), |boxed| boxed.as_any_mut().downcast_mut::<T>())
+        RefMut::filter_map(cell, |boxed| boxed.as_any_mut().downcast_mut::<T>())
             .map_err(|_| anyhow!(
                 "x_x :: tried to downcast (mut) resource with id {:?} to incorrect type: {}",
                 id,
@@ -434,105 +342,119 @@ impl State {
     }
 
     /// you probably dont want this
-    pub fn get_resource(&self, id: &ResourceId) -> Option<&RefCell<Box<dyn Resource + 'static>>> {
-        self.resources.get(id)
+    pub fn get_resource(&self, id: &ResourceId) -> anyhow::Result<Ref<'_, Box<dyn Resource + 'static>>> {
+        match id {
+            ResourceId::Camera => Ok(self.camera.try_borrow()?),
+            ResourceId::Keyboard => Ok(self.keyboard.try_borrow()?),
+            ResourceId::GraphicsContext => Ok(self.graphics.try_borrow()?),
+            ResourceId::Mouse => Ok(self.mouse.try_borrow()?),
+            ResourceId::Start => Ok(self.start.try_borrow()?),
+            ResourceId::Delta => Ok(self.delta.try_borrow()?),
+            _ => {
+                let k = id.key().ok_or(anyhow!("x_x :: tried to get resource with no key: {id:?} (this should never happen)"))?;
+                //println!("{:#?}", self.resources.get(id).map(|f| f.try_borrow_mut()).ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))?);
+                Ok(self.resources.get(&k).map(|f| f.try_borrow())
+                        .ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))??)
+            },
+            _ => panic!("x_x :: tried to get invalid resource key")
+        }
     }
     /// you probably dont want this
-    pub fn get_resource_mut(&mut self, id: &ResourceId) -> Option<&mut RefCell<Box<dyn Resource + 'static>>> {
-        self.resources.get_mut(id)
+    pub fn get_resource_mut(&self, id: &ResourceId) -> anyhow::Result<RefMut<'_, Box<dyn Resource + 'static>>> {
+        match id {
+            ResourceId::Camera => Ok(self.camera.try_borrow_mut()?),
+            ResourceId::Keyboard => Ok(self.keyboard.try_borrow_mut()?),
+            ResourceId::GraphicsContext => Ok(self.graphics.try_borrow_mut()?),
+            ResourceId::Mouse => Ok(self.mouse.try_borrow_mut()?),
+            ResourceId::Start => Ok(self.start.try_borrow_mut()?),
+            ResourceId::Delta => Ok(self.delta.try_borrow_mut()?),
+            _ => {
+                let k = id.key().ok_or(anyhow!("x_x :: tried to get resource with no key: {id:?} (this should never happen)"))?;
+                //println!("{:#?}", self.resources.get(id).map(|f| f.try_borrow_mut()).ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))?);
+                Ok(self.resources.get(&k).map(|f| f.try_borrow_mut())
+                        .ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))??)
+            },
+            _ => panic!("x_x :: tried to get invalid resource key")
+        }
     }
     
-    pub fn init(&mut self) {
-        pollster::block_on(resources::load_model("shaders/static", self)).expect("A!");
+    /// called immediately after new, if you need functions that require `self`
+    async fn init(&mut self) -> anyhow::Result<()> {
+        let wgpu = self.graphics();
+        let device = wgpu.device.clone();
+        let queue = &wgpu.queue;
+        let window = wgpu.window.clone();
+        let start = self.start();
 
-        //let shader = self.device.create_shader_module(wgpu::include_wgsl!("resources/shaders/static.wgsl"));
-        //
-        /*let time_uniform = TimeUniform {
-            time: sstart.elapsed().as_secs_f32()
-        };*/
-        //let resource = self.downcast_resource::<wgpu::Buffer>(&ResourceId::Custom(1));
-        //let device = self.wgpu().device.clone();
+        let time_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Time Buffer"),
+                contents: bytemuck::cast_slice(&[start.elapsed().as_secs_f32()]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }    
+        );    
+        let res =  window.inner_size().cast::<f32>().into();
+        let res_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Time Buffer"),
+                contents: bytemuck::cast_slice(&[ResolutionUniform { res }]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }    
+        );    
 
-        /*let time_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },    
-                    count: None,
-                }    
-            ],    
-            label: Some("time_bind_group_layout"),
-        });    
-        let time_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &time_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.downcast_resource::<wgpu::Buffer>(&"buffer::time".into()).as_entire_binding(),
-                }    
-            ],    
-            label: Some("time_bind_group"),
-        });
-        let st_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },    
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },    
-                    count: None,
-                }    
-            ],    
-            label: Some("st_bind_group_layout"),
-        });    
-        let st_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &st_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.downcast_resource::<wgpu::Buffer>(&"buffer::time".into()).as_entire_binding(),
-                }    ,
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.downcast_resource::<wgpu::Buffer>(&"buffer::res".into()).as_entire_binding(),
-                }    
-            ],    
-            label: Some("time_bind_group"),
-        });*/
+        let t = load_texture("crow.png", &device, &queue).await?;
 
-        let mesh1 = mesh::new_cube([0., 0., 0.], "shaders/static", self).expect("IDIOT");
-        //println!("{:?}", mesh1);
-        self.entities.push(self.world.spawn((mesh1,)));
-        let mesh2 = mesh::new_cube([1.5, 1.5, 1.5], "shaders/mesh", self).expect("IDIOT");
-        self.entities.push(self.world.spawn((mesh2,)));
+        let march = RaymarchUniform {
+            time: start.elapsed().as_secs_f32(),
+            delta: start.elapsed().as_millis_f32(),
+            res: window.inner_size().cast::<f32>().into(),
+        };
+        let march_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("March Buffer"),
+                contents: bytemuck::cast_slice(&[march]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }    
+        );    
+        drop(wgpu);
+        drop(start);
+
+        self.create_resource("camera_controller".into(), CameraController::new(0.05));
+        self.create_resource("buffer::time".into(), time_buffer);
+        self.create_resource("buffer::res".into(), res_buffer);
+        self.create_resource("buffer::march".into(), march_buffer);
+        self.create_resource("custom::march".into(), march);
+        self.create_resource("texture::crow".into(), t.view);
+        self.create_resource("sampler::crow".into(), t.sampler);
+
+        //let m = pollster::block_on(resources::load_model("shaders/image", self)).expect("A!");
+
+        //for i in m.meshes {
+            //println!("{i:#?}");
+            //self.entities.push(self.world.spawn((i,)));
+        //}
+
+        pollster::block_on(load_shader("march/march", self)).expect("IDIOT");
+        //self.create_resource(shader, value);
+        //self.entities.push(self.world.spawn((mesh1,)));
+        //let mesh2 = mesh::new_cube([1.5, 1.5, 1.5], "shaders/mesh", self).expect("IDIOT");
+        //self.entities.push(self.world.spawn((mesh2,)));
+
+        // this is shadertoy stuff, keeping it just in case
         //let plane = Shadertoy::new(env::current_dir().expect("couldnt get current dir?").join("src/resources/shaders/sphere.wgsl"), &[st_bind_group], &[&st_bind_group_layout], self);
         //self.entities.push(self.world.spawn(plane));
+
+        Ok(())
     }
 
+    // a relic of an ancient and naive time... you can stay
     /*pub fn add_render_object(&mut self, obj: impl RenderObject + 'static) {
         self.render_objects.push(Box::new(obj));
     }*/
 
-    pub fn render_pipeline_layout(&self, bindings: &[&BindGroupLayout]) -> PipelineLayout {
-        let device = self.wgpu().device.clone();
+    /// do we even need this function? (now that we have OMI)
+    fn _render_pipeline_layout(&self, bindings: &[&BindGroupLayout]) -> PipelineLayout {
+        let device = self.graphics().device.clone();
         device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: [&[self.camera().bind_group_layout.as_ref()], bindings].concat().as_slice(),
@@ -540,19 +462,22 @@ impl State {
         })
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    /// idk man ask learn-wgpu
+    /// all i know is we reconfigure the surface on resie and create a new depth texture to fit
+    fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            let mut wgpu = self.wgpu_mut();
+            let mut wgpu = self.graphics_mut();
             wgpu.is_surface_configured = true;
             wgpu.config.width = width;
             wgpu.config.height = height;
             wgpu.surface.configure(&wgpu.device, &wgpu.config);
             let t = texture::Texture::create_depth_texture(&wgpu.device, &wgpu.config, "depth_texture");
             drop(wgpu);
-            self.create_resource(ResourceId::DepthTexture, t);
+            self.graphics_mut().depth_texture = t;
         }
     }
 
+    /// ??
     fn handle_key(&mut self, event_loop: &ActiveEventLoop, key: KeyCode, pressed: bool) {
         match (key, pressed) {
             (KeyCode::Escape, true) => event_loop.exit(),
@@ -560,32 +485,39 @@ impl State {
         }
     }
 
+    /// you know whats up
+    /// called immediately before render()
     fn update(&mut self) {
-        //println!("delta in ms: {}", self.delta.elapsed().as_millis());
+        //println!("fps: {}", 1000.0 / self.delta().elapsed().as_millis_f64());
+        // no real reason to have a block anymore, but it could be useful and its harmless
         {
             let mut camera = self.camera_mut();
             let time_buffer = self.downcast_resource::<Buffer>(&"buffer::time".into());
 
-            //let time_buffer = self.downcast_resource_mut::<Buffer>(&ResourceId::Custom(1));
-            let wgpu = self.wgpu_mut();
+            let wgpu = self.graphics_mut();
             self.downcast_resource_mut::<CameraController>(&"camera_controller".into()).update_camera(&mut camera, &self.mouse(), &self.keyboard());
             let camera_config = camera.config();
             camera.uniform.update_view_proj(camera_config);
-            //self.time_uniform.time = self.start.elapsed().as_secs_f32();
+            wgpu.queue.write_buffer(&time_buffer, 0, bytemuck::cast_slice(&[self.start().elapsed().as_secs_f32()]));
+            let mut march = self.downcast_resource_mut::<RaymarchUniform>(&"custom::march".into());
+            let march_buffer = self.downcast_resource(&"buffer::march".into());
+            march.delta = self.delta().elapsed().as_millis_f32();
+            march.time = self.start().elapsed().as_secs_f32();
+            wgpu.queue.write_buffer(&march_buffer, 0, bytemuck::cast_slice(&[*march]));
             wgpu.queue.write_buffer(&time_buffer, 0, bytemuck::cast_slice(&[self.start().elapsed().as_secs_f32()]));
             wgpu.queue.write_buffer(&camera.buffer, 0, bytemuck::cast_slice(&[camera.uniform]));
             self.mouse_mut().update();
             self.keyboard_mut().update();
         }
-        self.delta = Instant::now();
+        *self.delta_mut() = Instant::now();
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        self.window().request_redraw();
+        
+        let wgpu = self.graphics();
+        wgpu.window.request_redraw() ;
 
-        let wgpu = self.wgpu_mut();
-
-        // We can't render unless the surface is configured
+        // we cant render unless the surface is configured
         if !wgpu.is_surface_configured {
             return Ok(());
         }
@@ -601,6 +533,8 @@ impl State {
                 label: Some("Render Encoder"),
             });
 
+        // for shadertoy stuff, ill keep this for a while maybe
+        // at least until i think of something for general rendering
         /*for (_, toy) in self.world.query::<&Shadertoy>().iter() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -635,6 +569,7 @@ impl State {
             pass.draw(0..6, 0..1);
         }*/ 
     
+        // learn-wgpu uses a block -> i use a block
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -652,7 +587,7 @@ impl State {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture().view,
+                    view: &wgpu.depth_texture.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -664,21 +599,22 @@ impl State {
             });
 
             for (_, mesh) in self.world.query::<&Mesh>().iter() {
-                pass.set_pipeline(&mesh.material(&self).render_pipeline);
-                for i in 0..mesh.material(&self).bind_groups.len() {
-                    pass.set_bind_group(i as u32, &mesh.material(&self).bind_groups[i], &[]);
+                let m = mesh.material(&self);
+                pass.set_pipeline(&m.render_pipeline);
+                for i in 0..m.bind_groups.len() {
+                    pass.set_bind_group(i as u32, &m.bind_groups[i], &[]);
                 }
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
             }
-            //render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            /*for obj in 0..self.render_objects.len() {
-                self.render_objects[obj].render(&mut render_pass);
-            }*/
-            
-            //render_pass.set_bind_group(1, &self.time_bind_group, &[]);
+            let s = self.downcast_resource::<Material>(&"material::march/march".into());
+            pass.set_pipeline(&s.render_pipeline);
+            for i in 0..s.bind_groups.len() {
+                pass.set_bind_group(i as u32, &s.bind_groups[i], &[]);
+            }
+            pass.draw(0..3, 0..1);
         }
 
         wgpu.queue.submit(iter::once(encoder.finish()));
@@ -687,20 +623,18 @@ impl State {
         Ok(())
     }
 
-    pub fn wgpu(&self) -> Ref<'_, WgpuResource> {
-        self.downcast_resource(&ResourceId::Wgpu)
+    // this feels horrible, and slow, and everything but its fineeeee
+    pub fn graphics(&self) -> Ref<'_, GraphicsContext> {
+        self.downcast_resource(&ResourceId::GraphicsContext)
     }
     pub fn camera(&self) -> Ref<'_, Camera> {
         self.downcast_resource(&ResourceId::Camera)
     }
-    pub fn depth_texture(&self) -> Ref<'_, Texture> {
-        self.downcast_resource(&ResourceId::DepthTexture)
-    }
-    pub fn window(&self) -> Ref<'_, Arc<Window>> {
-        self.downcast_resource(&ResourceId::Window)
-    }
     pub fn start(&self) -> Ref<'_, Instant> {
         self.downcast_resource(&ResourceId::Start)
+    }
+    pub fn delta(&self) -> Ref<'_, Instant> {
+        self.downcast_resource(&ResourceId::Delta)
     }
     pub fn mouse(&self) -> Ref<'_, MouseData> {
         self.downcast_resource(&ResourceId::Mouse)
@@ -708,20 +642,17 @@ impl State {
     pub fn keyboard(&self) -> Ref<'_, KeyboardData> {
         self.downcast_resource(&ResourceId::Keyboard)
     }
-    pub fn wgpu_mut(&self) -> RefMut<'_, WgpuResource> {
-        self.downcast_resource_mut(&ResourceId::Wgpu)
+    pub fn graphics_mut(&self) -> RefMut<'_, GraphicsContext> {
+        self.downcast_resource_mut(&ResourceId::GraphicsContext)
     }
     pub fn camera_mut(&self) -> RefMut<'_, Camera> {
         self.downcast_resource_mut(&ResourceId::Camera)
     }
-    pub fn depth_texture_mut(&self) -> RefMut<'_, Texture> {
-        self.downcast_resource_mut(&ResourceId::DepthTexture)
-    }
-    pub fn window_mut(&self) -> RefMut<'_, Arc<Window>> {
-        self.downcast_resource_mut(&ResourceId::Window)
-    }
     pub fn start_mut(&self) -> RefMut<'_, Instant> {
         self.downcast_resource_mut(&ResourceId::Start)
+    }
+    pub fn delta_mut(&self) -> RefMut<'_, Instant> {
+        self.downcast_resource_mut(&ResourceId::Delta)
     }
     pub fn mouse_mut(&self) -> RefMut<'_, MouseData> {
         self.downcast_resource_mut(&ResourceId::Mouse)
@@ -779,7 +710,7 @@ impl ApplicationHandler<State> for App {
                 Some(canvas) => canvas,
                 None => return,
             };
-            state.init();
+            pollster::block_on(state.init()).expect("x_x :: couldnt init state");
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -823,6 +754,7 @@ impl ApplicationHandler<State> for App {
         };
         state.mouse_mut().window_event(event_loop, window_id, &event);
         state.keyboard_mut().window_event(event_loop, window_id, &event);
+        //let wgpu = state.graphics();    
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -833,13 +765,14 @@ impl ApplicationHandler<State> for App {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        let size = state.window().inner_size();
+                        let size = state.graphics().window.inner_size();
                         state.resize(size.width, size.height);
                     }
                     Err(e) => {
                         log::error!("Unable to render {}", e);
                     }
-                }
+                };
+                //if state.start().elapsed().as_millis_f32() > 100000.0 { event_loop.exit(); }
             }
             WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
                 (MouseButton::Left, true) => {}

@@ -1,0 +1,21 @@
+entry_points:
+  vertex:
+    module: march/march.wgsl
+    function: vs_main
+  fragment:
+    module: march/march.wgsl
+    function: fs_main
+bind_groups:
+  - label: march:3
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+          - VERTEX
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
+        resource: buffer::march

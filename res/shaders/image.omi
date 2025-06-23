@@ -1,0 +1,24 @@
+bind_groups:
+  - preset: CAMERA
+  - label: image
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+        type: TEXTURE
+        texture:
+          multisampled: false
+          view_dimension: D2
+          sampler_type: FLOAT
+          filterable: true
+        count: null
+        resource: texture::crow
+      - binding: 1
+        visibility: 
+          - FRAGMENT
+        type: SAMPLER
+        sampler: FILTERING
+        count: null
+        resource: sampler::crow
+buffers:
+  - MODEL_VERTEX
