@@ -27,11 +27,11 @@ pub struct Mesh {
 
     pub num_elements: u32,
 
-    pub material: ResourceId
+    pub material: Option<ResourceId>
 }
 
 impl Mesh {
-    pub fn new<T: Vertex+Debug>(verts: impl Into<Vec<T>>, indices: impl Into<Vec<u32>>, shader: impl Into<ResourceId>, name: Option<String>, state: &State) -> Self {
+    pub fn new<T: Vertex+Debug>(verts: impl Into<Vec<T>>, indices: impl Into<Vec<u32>>, shader: impl Into<Option<ResourceId>>, name: Option<String>, state: &State) -> Self {
         let device = state.graphics().device.clone();
         let verts = verts.into();
         let indices = indices.into();
@@ -113,10 +113,10 @@ impl Mesh {
     }
 
     pub fn material<'a>(&self, state: &'a State) -> Ref<'a, Material> {
-        state.downcast_resource::<Material>(&self.material)
+        state.downcast_resource::<Material>(&self.material.unwrap())
     }
     pub fn material_mut<'a>(&self, state: &'a State) -> RefMut<'a, Material> {
-        state.downcast_resource_mut::<Material>(&self.material)
+        state.downcast_resource_mut::<Material>(&self.material.unwrap())
     }
 }
 
@@ -134,37 +134,45 @@ impl Mesh {
 
 pub fn new_cube(position: [f32; 3], shader_path: &str, state: &mut State) -> Result<Mesh, anyhow::Error> {
     let verts = &[
-            ColorVertex {
+            ModelVertex {
                 position: [0.0 + position[0], 0.0 + position[1], 0.0 + position[2]],
-                color: [1.0, 0.0, 0.0, 1.0],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [1.0 + position[0], 0.0 + position[1], 0.0 + position[2]],
-                color: [1.0, 0.0, 0.0, 0.8],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [0.0 + position[0], 1.0 + position[1], 0.0 + position[2]],
-                color: [1.0, 0.0, 0.0, 0.8],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [1.0 + position[0], 1.0 + position[1], 0.0 + position[2]],
-                color: [1.0, 0.0, 0.0, 1.0],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [0.0 + position[0], 0.0 + position[1], -1.0 + position[2]],
-                color: [0.0, 1.0, 0.0, 1.0],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [1.0 + position[0], 0.0 + position[1], -1.0 + position[2]],
-                color: [0.0, 1.0, 0.0, 0.8],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [0.0 + position[0], 1.0 + position[1], -1.0 + position[2]],
-                color: [0.0, 1.0, 0.0, 0.8],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
-            ColorVertex {
+            ModelVertex {
                 position: [1.0 + position[0], 1.0 + position[1], -1.0 + position[2]],
-                color: [0.0, 1.0, 0.0, 1.0],
+                tex_coords: [0.0, 0.0],
+                normal: [0., 0., 0.]
             },
         ];
 

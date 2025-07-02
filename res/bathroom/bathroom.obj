@@ -1,6 +1,5 @@
 # Blender 4.4.3
 # www.blender.org
-mtllib bathroom.mtl
 o Plane.001
 v 7.500000 15.000000 7.500000
 v 7.500000 0.000000 7.500000

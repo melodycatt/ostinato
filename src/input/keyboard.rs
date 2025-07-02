@@ -25,6 +25,7 @@ impl KeyboardData {
         self.pressed.contains(&key)
     }
     pub fn just_pressed(&self, key: PhysicalKey) -> bool {
+        //println!("AAAA {key:?} {} {}", self.pressed.contains(&key), self.prev_pressed.contains(&key));
         self.pressed.contains(&key) && !self.prev_pressed.contains(&key)
     }
     pub fn just_released(&self, key: PhysicalKey) -> bool {

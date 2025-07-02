@@ -3,7 +3,7 @@ entry_points:
     module: shaders/mesh.wgsl
     function: vs_main
   fragment:
-    module: shaders/mesh.wgsl
+    module: bathroom/blue.wgsl
     function: fs_main
 bind_groups:
   - preset: CAMERA

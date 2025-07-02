@@ -1,0 +1,23 @@
+entry_points:
+  vertex:
+    module: shaders/mesh.wgsl
+    function: vs_main
+  fragment:
+    module: bathroom/light.wgsl
+    function: fs_main
+bind_groups:
+  - preset: CAMERA
+  - label: light
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
+        resource: buffer::light
+buffers:
+  - MODEL_VERTEX

@@ -1,4 +1,5 @@
 pub mod controller;
+pub mod light;
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
     cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
     cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
@@ -6,12 +7,12 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_co
     cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
 
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use cgmath::{One, Point3, Quaternion, Vector3};
-use wgpu::{util::DeviceExt, Device};
+use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, Device, RenderPass};
 
-use crate::resources::Resource;
+use crate::{mesh::{Mesh}, resources::Resource, State};
 
 macro_rules! derive_camera_matrix {
     ($struct:ident) => {
@@ -44,11 +45,12 @@ pub struct Camera {
 
     pub uniform: CameraUniform,
     pub buffer: wgpu::Buffer,
-    //camera_bind_group: wgpu::BindGroup,
+    pub bind_group: Arc<wgpu::BindGroup>,
     pub bind_group_layout: Arc<wgpu::BindGroupLayout>,
 //    pub camera_controller: CameraController,
 }
 
+#[derive(Clone, Copy)]
 pub struct CameraConfig {
     pub eye: Point3<f32>,
     pub rotation: Quaternion<f32>,
@@ -98,21 +100,19 @@ impl Camera {
             }    
         );    
 
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let camera_bind_group_layout = Self::bind_group_layout(device);
+
+        let binding = camera_buffer.as_entire_binding();
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                wgpu::BindGroupEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },    
-                    count: None,
-                }    
+                    resource: binding,
+                }   
             ],    
-            label: Some("camera_bind_group_layout"),
-        });    
+            label: Some("CAMERA"),
+        });
 
         Self {
             eye: config.eye,
@@ -123,11 +123,51 @@ impl Camera {
             zfar: config.zfar,
             uniform: camera_uniform,
             buffer: camera_buffer,
-            bind_group_layout: Arc::new(camera_bind_group_layout)
+            bind_group: Arc::new(bind_group),
+            bind_group_layout: Arc::new(camera_bind_group_layout),
         }
     }
     pub fn config(&self) -> CameraData {
         CameraData { eye: self.eye, rotation: self.rotation, aspect: self.aspect, fovy: self.fovy, znear: self.znear, zfar: self.zfar }
+    }
+
+    pub fn render(bind_group: Arc<BindGroup>, pass: &mut RenderPass, _excl_mirror: bool, state: &mut State) {
+        //println!("1 {excl_mirror}");
+        state.create_resource("bind_group::core::camera".into(), bind_group.clone());
+        for (_, mesh) in state.world.query::<&Mesh>().iter() {
+            let m = mesh.material(&state);
+            pass.set_pipeline(&m.render_pipeline);
+            for i in 0..m.global_bind_groups.len() {
+                let b =  state.downcast_resource::<Arc<BindGroup>>(&m.global_bind_groups[i].1);
+                //println!("{:?}, {b:#?}", m.global_bind_groups[i].1);
+                pass.set_bind_group(m.global_bind_groups[i].0 as u32, Some(&**b), &[]);
+            }
+            for i in 0..m.bind_groups.len() {
+                let b = &m.bind_groups[i];
+                //println!("{b:#?}");
+                pass.set_bind_group(b.0 as u32, Some(&b.1), &[]);
+            }
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        }
+    }
+    pub fn bind_group_layout(device: &Device) -> BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },    
+                    count: None,
+                }    
+            ],    
+            label: Some("camera_bind_group_layout"),
+        })
     }
 }
 
@@ -147,6 +187,7 @@ derive_camera_matrix!(CameraData);
 pub struct CameraUniform {
     // We can't use cgmath with bytemuck directly, so we'll have
     // to convert the Matrix4 into a 4x4 f32 array
+    pub view_pos: [f32; 4],
     pub view_proj: [[f32; 4]; 4],
 }
 
@@ -154,11 +195,13 @@ impl CameraUniform {
     pub fn new() -> Self {
         use cgmath::SquareMatrix;
         Self {
+            view_pos: [0.; 4],
             view_proj: cgmath::Matrix4::identity().into(),
         }
     }
 
     pub fn update_view_proj(&mut self, camera: CameraData) {
+        self.view_pos = camera.eye.to_homogeneous().into();
         self.view_proj = camera.build_view_projection_matrix().into();
     }
 }

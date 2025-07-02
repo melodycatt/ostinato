@@ -18,7 +18,7 @@ impl CameraController {
         Self {
             speed,
             pitch: 0.0,
-            yaw: 0.0
+            yaw: PI
         }
     }
 

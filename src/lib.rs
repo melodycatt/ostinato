@@ -4,11 +4,11 @@ use std::{any::{Any, TypeId}, cell::{Ref, RefCell, RefMut}, collections::HashMap
 pub use derive_resource::Resource;
 
 use anyhow::anyhow;
-use as_any::AsAny;
-use cgmath::{One, Quaternion};
+use as_any::{AsAny, Downcast};
+use cgmath::{Basis3, EuclideanSpace, Matrix, Matrix3, One, Quaternion, Rad, Rotation3, SquareMatrix};
 use hecs::{Component, Entity, World};
 use nohash_hasher::BuildNoHashHasher;
-use wgpu::{util::DeviceExt, BindGroupLayout, Buffer, PipelineLayout};
+use wgpu::{util::{BufferInitDescriptor, DeviceExt}, BindGroupLayout, Buffer, BufferUsages, PipelineLayout};
 use winit::{
     application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
@@ -16,7 +16,7 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{camera::{controller::CameraController, Camera, CameraConfig}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{Material, Mesh}, resources::{load_shader, load_texture, Resource}, texture::Texture};
+use crate::{camera::{controller::CameraController, light::LightUniform, Camera, CameraConfig}, input::{keyboard::KeyboardData, mouse::MouseData}, mesh::{new_cube, Mesh, ModelVertex}, resources::{load_model, load_texture, Resource}, texture::Texture};
 
 pub mod texture;
 pub mod mesh;
@@ -106,7 +106,9 @@ impl ResourceId {
         //println!("hashing {s}");
         let mut hasher = DefaultHasher::new();
         s.hash(&mut hasher);
-        return hasher.finish()
+        let h = hasher.finish();
+        //println!("hashed {h}");
+        return h
     }
 
     pub fn key(&self) -> Option<u64> {
@@ -238,8 +240,8 @@ impl State {
 
         // TODO: let user set initial cameraconfig (maybe)
         let camera_config = CameraConfig {
-            eye: (0.0, 0.0, 2.0).into(),
-            rotation: Quaternion::one(),
+            eye: (0.0, 5.0, 2.0).into(),
+            rotation: Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Rad(std::f32::consts::PI)),
             fovy: 60.0,
             znear: 0.01,
             zfar: 1000.0,
@@ -247,7 +249,7 @@ impl State {
 
         let camera = Camera::new(camera_config, config.width as f32 / config.height as f32, &device);
 
-        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+        let depth_texture = texture::Texture::create_depth_texture(&device, (config.width, config.height), "depth_texture");
 
         let resources: HashMap<u64, RefCell<Box<dyn Resource + 'static>>, BuildNoHashHasher<u64>> = HashMap::with_hasher(BuildNoHashHasher::<u64>::new());
         let graphics = GraphicsContext {
@@ -356,7 +358,7 @@ impl State {
                 Ok(self.resources.get(&k).map(|f| f.try_borrow())
                         .ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))??)
             },
-            _ => panic!("x_x :: tried to get invalid resource key")
+            //_ => panic!("x_x :: tried to get invalid resource key")
         }
     }
     /// you probably dont want this
@@ -374,7 +376,7 @@ impl State {
                 Ok(self.resources.get(&k).map(|f| f.try_borrow_mut())
                         .ok_or(anyhow!("x_x :: tried to get nonexistent resource with id: {id:?}"))??)
             },
-            _ => panic!("x_x :: tried to get invalid resource key")
+            //_ => panic!("x_x :: tried to get invalid resource key")
         }
     }
     
@@ -419,6 +421,18 @@ impl State {
         drop(wgpu);
         drop(start);
 
+        let l = LightUniform {
+            light_pos: [-1., 5., -1.],
+            brightness: 20.0
+        };
+        let lb = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("light buffer"),
+            contents: bytemuck::cast_slice(&[l]),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST
+        });
+        self.create_resource("buffer::light".into(), lb);
+        //self.create_resource("buffer::dummy".into(), device.create_buffer_init(&BufferInitDescriptor { label: (), contents: (), usage: () );
+
         self.create_resource("camera_controller".into(), CameraController::new(0.05));
         self.create_resource("buffer::time".into(), time_buffer);
         self.create_resource("buffer::res".into(), res_buffer);
@@ -434,15 +448,13 @@ impl State {
             //self.entities.push(self.world.spawn((i,)));
         //}
 
-        pollster::block_on(load_shader("march/march", self)).expect("IDIOT");
-        //self.create_resource(shader, value);
-        //self.entities.push(self.world.spawn((mesh1,)));
-        //let mesh2 = mesh::new_cube([1.5, 1.5, 1.5], "shaders/mesh", self).expect("IDIOT");
-        //self.entities.push(self.world.spawn((mesh2,)));
+        let m = load_model("bathroom/bathroom", self).await?;
+        for i in m.meshes {
+            self.entities.push(self.world.spawn((i,)));
+        }
 
-        // this is shadertoy stuff, keeping it just in case
-        //let plane = Shadertoy::new(env::current_dir().expect("couldnt get current dir?").join("src/resources/shaders/sphere.wgsl"), &[st_bind_group], &[&st_bind_group_layout], self);
-        //self.entities.push(self.world.spawn(plane));
+        let m2 = new_cube([-1., 5., -1.], "shaders/mesh", self).expect("augh");
+        self.entities.push(self.world.spawn((m2,)));
 
         Ok(())
     }
@@ -471,7 +483,7 @@ impl State {
             wgpu.config.width = width;
             wgpu.config.height = height;
             wgpu.surface.configure(&wgpu.device, &wgpu.config);
-            let t = texture::Texture::create_depth_texture(&wgpu.device, &wgpu.config, "depth_texture");
+            let t = texture::Texture::create_depth_texture(&wgpu.device, (wgpu.config.width, wgpu.config.height), "depth_texture");
             drop(wgpu);
             self.graphics_mut().depth_texture = t;
         }
@@ -508,7 +520,9 @@ impl State {
             wgpu.queue.write_buffer(&camera.buffer, 0, bytemuck::cast_slice(&[camera.uniform]));
             self.mouse_mut().update();
             self.keyboard_mut().update();
+            //drop(camera)
         }
+        //self. world = world;
         *self.delta_mut() = Instant::now();
     }
 
@@ -571,6 +585,8 @@ impl State {
     
         // learn-wgpu uses a block -> i use a block
         {
+            drop(wgpu);
+            let wgpu = self.graphics(); 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -598,24 +614,19 @@ impl State {
                 timestamp_writes: None,
             });
 
-            for (_, mesh) in self.world.query::<&Mesh>().iter() {
-                let m = mesh.material(&self);
-                pass.set_pipeline(&m.render_pipeline);
-                for i in 0..m.bind_groups.len() {
-                    pass.set_bind_group(i as u32, &m.bind_groups[i], &[]);
-                }
-                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
-            }
-
-            let s = self.downcast_resource::<Material>(&"material::march/march".into());
+            drop(wgpu);
+            //self.create_resource("bind_group::core::camera", self.camera().bind_group);
+            let c = self.camera().bind_group.clone();
+            Camera::render(c, &mut pass, false, self);
+            /*let s = self.downcast_resource::<Material>(&"material::march/march".into());
             pass.set_pipeline(&s.render_pipeline);
             for i in 0..s.bind_groups.len() {
                 pass.set_bind_group(i as u32, &s.bind_groups[i], &[]);
             }
-            pass.draw(0..3, 0..1);
+            pass.draw(0..3, 0..1);*/
         }
+
+        let wgpu = self.graphics();
 
         wgpu.queue.submit(iter::once(encoder.finish()));
         output.present();

@@ -1,6 +1,5 @@
 objects:
-  - index: 0
-    material_index: 1
+  - default: 0
 materials:
-  - bathroom/red
+  - bathroom/light
   - bathroom/blue
