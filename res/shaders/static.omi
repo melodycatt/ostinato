@@ -1,9 +1,17 @@
+entry_points:
+  vertex:
+    module: shaders/static.wgsl
+    function: vs_main
+  fragment:
+    module: shaders/static.wgsl
+    function: fs_main
+shared_bind_groups:
+  - CAMERA
 bind_groups:
-  - preset: CAMERA
   - label: time
     entries:
       - binding: 0
-        visibility: 
+        visibility:
           - FRAGMENT
         type: BUFFER
         buffer:
@@ -11,6 +19,6 @@ bind_groups:
           has_dynamic_offset: false
           min_binding_size: null
         count: null
-        resource: buffer::time
+        resource: time
 buffers:
-  - COLOR_VERTEX
+  - MODEL_VERTEX

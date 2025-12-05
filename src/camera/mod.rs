@@ -1,4 +1,5 @@
-pub mod controller;
+mod controller;
+pub use controller::*;
 pub mod light;
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
     cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -7,12 +8,12 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_co
     cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
 
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
 use cgmath::{One, Point3, Quaternion, Vector3};
-use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, Device, RenderPass};
+use wgpu::{util::DeviceExt, BindGroupLayout, Device};
 
-use crate::{mesh::{Mesh}, resources::Resource, State};
+use crate::resources::Resource;
 
 macro_rules! derive_camera_matrix {
     ($struct:ident) => {
@@ -131,27 +132,6 @@ impl Camera {
         CameraData { eye: self.eye, rotation: self.rotation, aspect: self.aspect, fovy: self.fovy, znear: self.znear, zfar: self.zfar }
     }
 
-    pub fn render(bind_group: Arc<BindGroup>, pass: &mut RenderPass, _excl_mirror: bool, state: &mut State) {
-        //println!("1 {excl_mirror}");
-        state.create_resource("bind_group::core::camera".into(), bind_group.clone());
-        for (_, mesh) in state.world.query::<&Mesh>().iter() {
-            let m = mesh.material(&state);
-            pass.set_pipeline(&m.render_pipeline);
-            for i in 0..m.global_bind_groups.len() {
-                let b =  state.downcast_resource::<Arc<BindGroup>>(&m.global_bind_groups[i].1);
-                //println!("{:?}, {b:#?}", m.global_bind_groups[i].1);
-                pass.set_bind_group(m.global_bind_groups[i].0 as u32, Some(&**b), &[]);
-            }
-            for i in 0..m.bind_groups.len() {
-                let b = &m.bind_groups[i];
-                //println!("{b:#?}");
-                pass.set_bind_group(b.0 as u32, Some(&b.1), &[]);
-            }
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
-        }
-    }
     pub fn bind_group_layout(device: &Device) -> BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[

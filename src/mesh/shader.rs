@@ -1,24 +1,26 @@
 use derive_resource::Resource;
 use wgpu::{BindGroup, ColorTargetState, Device, PipelineLayout, RenderPipeline, ShaderModule, TextureFormat, VertexBufferLayout};
 
-use crate::{resources::Resource, texture, ResourceId};
+use crate::{resources::Resource, texture};
 
 #[derive(Debug, Resource)]
 pub struct Material {
     //not sure we actually need to store the shader_modules
     //pub shader_modules: (ShaderModule, ShaderModule),
-    pub bind_groups: Vec<(usize, BindGroup)>,
-    pub global_bind_groups: Vec<(usize, ResourceId)>,
+    pub shared_bind_groups: Vec<usize>,
+    pub bind_groups: Vec<BindGroup>,
     pub render_pipeline: RenderPipeline,
     //not sure we need this either but its not hurting anyone
-    pub pipeline_layout: PipelineLayout
+    pub pipeline_layout: PipelineLayout,
+    pub name: String
 }
 
 impl Material {
     pub fn new(
+        name: String,
         shader_module: ShaderModule,
-        bind_groups: Vec<(usize, BindGroup)>,
-        global_bind_groups: Vec<(usize, ResourceId)>,
+        shared_bind_groups: Vec<usize>,
+        bind_groups: Vec<BindGroup>,
         //bind_group_layouts: &[Arc<BindGroupLayout>],
         pipeline_layout: PipelineLayout,
         vertex_buffers: &[VertexBufferLayout],
@@ -70,17 +72,19 @@ impl Material {
         Self {
             //shader_modules: (shader_module, shader_module),
             //bind_group_layouts: bind_group_layouts.to_vec(),
+            name,
             bind_groups,
-            global_bind_groups,
+            shared_bind_groups,
             render_pipeline,
             pipeline_layout,
         }
     }
     pub fn with_pipeline(
+        name: String,
         render_pipeline: RenderPipeline,
         pipeline_layout: PipelineLayout,
-        bind_groups: Vec<(usize, BindGroup)>,
-        global_bind_groups: Vec<(usize, ResourceId)>,
+        shared_bind_groups: Vec<usize>,
+        bind_groups: Vec<BindGroup>,
         //bind_group_layouts: &[Arc<BindGroupLayout>],
         //device: &Device,
     ) -> Self {
@@ -89,24 +93,24 @@ impl Material {
         Self {
             //shader_modules,
             //bind_group_layouts: bind_group_layouts.to_vec(),
+            name,
             bind_groups,
-            global_bind_groups,
+            shared_bind_groups,
             render_pipeline,
             pipeline_layout,
         }
     }
     pub fn new_no_stencil(
+        name: String,
         shader_module: ShaderModule,
-        bind_groups: Vec<(usize, BindGroup)>,
-        global_bind_groups: Vec<(usize, ResourceId)>,
+        shared_bind_groups: Vec<usize>,
+        bind_groups: Vec<BindGroup>,
         //bind_group_layouts: &[Arc<BindGroupLayout>],
         pipeline_layout: PipelineLayout,
         vertex_buffers: &[VertexBufferLayout],
         fragment_targets: &[Option<ColorTargetState>],
         device: &Device,
     ) -> Self {
-        println!("{:?}", pipeline_layout);
-
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Shader Render Pipeline"),
             layout: Some(&pipeline_layout),
@@ -144,8 +148,9 @@ impl Material {
         Self {
             //shader_module,
             //bind_group_layouts: bind_group_layouts.to_vec(),
+            name,
             bind_groups,
-            global_bind_groups,
+            shared_bind_groups,
             render_pipeline,
             pipeline_layout,
         }

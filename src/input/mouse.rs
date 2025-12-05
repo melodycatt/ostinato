@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::Resource;
+use crate::{Resource, resources::Resource};
 use vectors::Vector2;
 use winit::{event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent}, event_loop::ActiveEventLoop};
 

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use crate::Resource;
+use crate::{Resource, resources::Resource};
 use winit::{event::{DeviceEvent, DeviceId, ElementState, WindowEvent}, event_loop::ActiveEventLoop, keyboard::PhysicalKey};
 
 #[derive(Clone, Debug, Resource)]

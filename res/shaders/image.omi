@@ -1,3 +1,6 @@
+shared_bind_groups:
+  - CAMERA
+  - AAA
 bind_groups:
   - preset: CAMERA
   - label: image

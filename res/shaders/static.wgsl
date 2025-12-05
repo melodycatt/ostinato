@@ -4,6 +4,7 @@ fn hash(p: vec4<f32>) -> f32 {
 }
 
 struct CameraUniform {
+    view_pos: vec4<f32>,
     view_proj: mat4x4<f32>,
 };
 @group(0) @binding(0) // 1.
@@ -11,7 +12,7 @@ var<uniform> camera: CameraUniform;
 struct TimeUniform {
     time: f32,
 };
-@group(1) @binding(0) // 1.
+@group(1) @binding(0) // 1
 var<uniform> time: TimeUniform;
 
 struct VertexInput {

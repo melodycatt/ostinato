@@ -5,7 +5,7 @@ entry_points:
   fragment:
     module: bathroom/blue.wgsl
     function: fs_main
-bind_groups:
-  - preset: CAMERA
+shared_bind_groups:
+  - CAMERA
 buffers:
   - MODEL_VERTEX

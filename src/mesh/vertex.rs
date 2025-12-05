@@ -152,7 +152,7 @@ impl Vertex for ModelVertex {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VertexType {
     Color,
     Texture,

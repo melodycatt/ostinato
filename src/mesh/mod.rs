@@ -8,16 +8,12 @@ pub use shader::*;
 
 use std::fmt::Debug;
 use std::ops::Range;
-use std::cell::{Ref, RefMut};
 use wgpu::{util::DeviceExt, Device, Queue};
 
-use crate::resources::load_shader;
-use crate::ResourceId;
-use crate::{State};
+use crate::Renderer;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mesh {
-    pub name: Option<String>,
     pub vertices: Vec<u8>,
     pub vertex_type: VertexType,
     pub indices: Vec<u32>,
@@ -27,15 +23,21 @@ pub struct Mesh {
 
     pub num_elements: u32,
 
-    pub material: Option<ResourceId>
+    pub material: usize
 }
 
 impl Mesh {
-    pub fn new<T: Vertex+Debug>(verts: impl Into<Vec<T>>, indices: impl Into<Vec<u32>>, shader: impl Into<Option<ResourceId>>, name: Option<String>, state: &State) -> Self {
-        let device = state.graphics().device.clone();
+    /// idk what name is for
+    pub fn new<T: Vertex+Debug>(
+        verts: impl Into<Vec<T>>, 
+        indices: impl Into<Vec<u32>>, 
+        shader: usize, 
+        renderer: &mut Renderer
+    ) -> Self {
+        let device = renderer.device.clone();
         let verts = verts.into();
         let indices = indices.into();
-        //println!("{:?}", verts);
+
         let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -52,7 +54,6 @@ impl Mesh {
         );
 
         Self {
-            name,
             vertices: bytemuck::cast_slice(&verts).to_vec(),
             vertex_type: T::TYPE,
 
@@ -62,25 +63,10 @@ impl Mesh {
             vertex_buffer,
             index_buffer,
 
-
-            material: shader.into()
+            material: shader
         }
     }
     
-    pub fn construct<T: Vertex+Debug>(verts: impl Into<Vec<T>>, indices: impl Into<Vec<u32>>, shader_path: &str, state: &mut State) -> anyhow::Result<Self> {
-
-        let rid = pollster::block_on(load_shader(shader_path, state));
-        //let material = shader::Material::new(shader, [&[camera_bind_group], bind_groups].concat(), state.render_pipeline_layout(layouts) /*&[Arc::new(camera_bind_group_layout), Arc::new(time_bind_group_layout)]*/, &[T::desc()], &[Some(shader::Material::screen_target(state.wgpu().config.format))], &device);
-        //state.create_resource(rid, material);
-
-        Ok(Mesh::new(
-            verts, indices,
-            rid?,
-            Some(shader_path.to_owned()),
-            &state
-        ))
-    }
-
     pub fn update_buffers(&mut self, device: &Device, queue: &Queue) {
         //let vertex_bytes = bytemuck::cast_slice(&self.vertices);
         let vertex_data_size = self.vertices.len() as u64;
@@ -112,12 +98,6 @@ impl Mesh {
         queue.submit(Some(encoder.finish()));
     }
 
-    pub fn material<'a>(&self, state: &'a State) -> Ref<'a, Material> {
-        state.downcast_resource::<Material>(&self.material.unwrap())
-    }
-    pub fn material_mut<'a>(&self, state: &'a State) -> RefMut<'a, Material> {
-        state.downcast_resource_mut::<Material>(&self.material.unwrap())
-    }
 }
 
 /*impl RenderObject for Mesh {
@@ -132,7 +112,7 @@ impl Mesh {
     }
 }*/
 
-pub fn new_cube(position: [f32; 3], shader_path: &str, state: &mut State) -> Result<Mesh, anyhow::Error> {
+pub fn new_cube(position: [f32; 3], scale: [f32; 3], shader_path: &str, renderer: &mut Renderer) -> Mesh {
     let verts = &[
             ModelVertex {
                 position: [0.0 + position[0], 0.0 + position[1], 0.0 + position[2]],
@@ -140,37 +120,37 @@ pub fn new_cube(position: [f32; 3], shader_path: &str, state: &mut State) -> Res
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [1.0 + position[0], 0.0 + position[1], 0.0 + position[2]],
+                position: [scale[0] + position[0], 0.0 + position[1], 0.0 + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [0.0 + position[0], 1.0 + position[1], 0.0 + position[2]],
+                position: [0.0 + position[0], scale[1] + position[1], 0.0 + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [1.0 + position[0], 1.0 + position[1], 0.0 + position[2]],
+                position: [scale[0] + position[0], scale[1] + position[1], 0.0 + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [0.0 + position[0], 0.0 + position[1], -1.0 + position[2]],
+                position: [0.0 + position[0], 0.0 + position[1], scale[2] + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [1.0 + position[0], 0.0 + position[1], -1.0 + position[2]],
+                position: [scale[0] + position[0], 0.0 + position[1], scale[2] + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [0.0 + position[0], 1.0 + position[1], -1.0 + position[2]],
+                position: [0.0 + position[0], scale[1] + position[1], scale[2] + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
             ModelVertex {
-                position: [1.0 + position[0], 1.0 + position[1], -1.0 + position[2]],
+                position: [scale[0] + position[0], scale[1] + position[1], scale[2] + position[2]],
                 tex_coords: [0.0, 0.0],
                 normal: [0., 0., 0.]
             },
@@ -190,7 +170,7 @@ pub fn new_cube(position: [f32; 3], shader_path: &str, state: &mut State) -> Res
             4, 6, 5,   
             6, 7, 5
         ];
-    Mesh::construct(verts, indices, shader_path, state)
+    Mesh::new(verts, indices, renderer.shaders.index_of(shader_path), renderer)
 }
 
 pub trait DrawModel<'a> {

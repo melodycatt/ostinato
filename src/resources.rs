@@ -1,12 +1,12 @@
-use std::{any::Any, cell::RefMut, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 
+use std::{any::Any, collections::HashMap, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 use anyhow::anyhow;
 use serde_yaml::Value;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState};
 
 extern crate alloc;
 
-use crate::{camera::Camera, mesh::{self, Material}, texture, ResourceId, State};
+use crate::{mesh::{self, Material}, Renderer, texture};
 
 #[cfg(target_arch = "wasm32")]
 fn format_url(file_name: &str) -> reqwest::Url {
@@ -31,7 +31,6 @@ pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
         let path = std::path::Path::new(env!("OUT_DIR"))
             .join("res")
             .join(file_name);
-        println!("{:?}", path);
         std::fs::read_to_string(path)?
     };
 
@@ -79,300 +78,307 @@ macro_rules! unwrap_yaml {
     };
 }
 
+/// if `resource_name` is omitted `file_name` is used to store the shader in the renderer;
+/// you should specify a resource name if you load the same shader twice with different options
 pub async fn load_shader(
     file_name: &str,
-    state: &mut State
-) -> anyhow::Result<ResourceId> {
-    let f = format!("material::{file_name}");
-    let id: ResourceId = f.into();
-    let existing = state.resources.contains_key(&id.key().unwrap());
-    if existing {
-        return Ok(id);
-    } else {
-        let m = load_shader_raw(file_name, state).await?;
-        state.create_resource(id, m);
-        return Ok(id)
+    renderer: &mut Renderer,
+    resource_name: Option<&str>,
+    primitive_state: Option<PrimitiveState>
+) -> anyhow::Result<usize> {
+    let resource_name = match resource_name {
+        Some(name) => name,
+        None => file_name
+    };
+    let primitive_state = match primitive_state {
+        Some(prim) => prim,
+        None => PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        }
+    };
+
+    let id = renderer.shaders.index_of(resource_name);
+    let existing = renderer.shaders.get(id);
+    if existing.is_err() {
+        let m = load_shader_raw(file_name, renderer, primitive_state).await?;
+        renderer.shaders.insert(resource_name, m);
     }
+
+    Ok(id)
 }
+
+
 pub async fn load_shader_raw(
     file_name: &str,
-    state: &mut State
+    renderer: &mut Renderer,
+    primitive_state: PrimitiveState
 ) -> anyhow::Result<Material> {
-    let device = state.graphics().device.clone();
+    let device = renderer.device.clone();
     let omi_text = load_string(&format!("{file_name}.omi")).await?;
     let root: Value = serde_yaml::from_str(&omi_text)?;
 
-    let bind_groups_yaml = parse_yaml!(root.get("bind_groups"), as_sequence, "bind_groups");
-        // .ok_or(anyhow!("x_x :: invalid OMI yaml! missing bind_groups"))?.as_sequence()
-        // .ok_or(anyhow!("x_x :: invalid OMI yaml! field bind_groups is invalid"))?;
+    let bind_groups_yaml = match root.get("bind_groups") {
+        Some(value) => value.as_sequence().ok_or(anyhow!("x_x :: invalid OMI yaml! field `bind_groups` is invalid"))?,
+        None => &Vec::new()
+    };
+
+    let globals_yaml = parse_yaml!(root.get("shared_bind_groups"), as_sequence, "shared_bind_groups");
+    let globals = globals_yaml.iter()
+        .map(|x| {
+            x.as_str()
+                .ok_or(anyhow!("x_x :: invalid shared_bind_groups item!"))
+                .map(|x| renderer.shared_bind_groups.index_of(x))
+        })
+        .collect::<anyhow::Result<Vec<_>,_>>()?;
+
     let mut bind_group_layouts = Vec::with_capacity(bind_groups_yaml.len());
     let mut bind_groups = Vec::with_capacity(bind_groups_yaml.len());
-    let mut globals: Vec<(usize, ResourceId)> = Vec::with_capacity(bind_groups_yaml.len());
+
     for i in 0..bind_groups_yaml.len() {
         let group = &bind_groups_yaml[i];
-        if let Some(preset) = group.get("preset") {
-            match preset.as_str().ok_or(anyhow!("x_x :: invalid bind group preset!"))? {
-                "CAMERA" => {
-                    // let layout: &BindGroupLayout = &state.camera().bind_group_layout;
-                    // let cam = state.camera();
-                    // let binding = crate::camera::Camera::binding(&*cam)?;
-                    // let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    //     layout: layout,
-                    //     entries: &[
-                    //         wgpu::BindGroupEntry {
-                    //             binding: 0,
-                    //             resource: binding,
-                    //         }   
-                    //     ],    
-                    //     label: Some("CAMERA"),
-                    // });
-                    globals.push((i, "bind_group::core::camera".into()));
-                    bind_group_layouts.push(Arc::new(Camera::bind_group_layout(&device)));
-                }
-                other => {return Err(anyhow!("invalid bind group preset: {}", other))}
-            }
-            println!("why dont we do this")
-        } else {
-            let label = parse_yaml!(group.get("label"), as_str, "label");
-            let entries_yaml = parse_yaml!(group.get("entries"), as_sequence, "entries");
-            let mut entries = Vec::with_capacity(entries_yaml.len());
-            let mut resource_labels = Vec::with_capacity(entries_yaml.len());
-            for e in 0..entries_yaml.len() {
-                let entry = &entries_yaml[e];
-                let vis = parse_yaml!(entry.get("visibility"), as_sequence, "visibility")
-                    .iter()
-                    .map(|value| {
-                        match value.as_str() {
-                            Some("FRAGMENT") => Ok(wgpu::ShaderStages::FRAGMENT),
-                            Some("COMPUTE") => Ok(wgpu::ShaderStages::COMPUTE),
-                            Some("MESH") => Ok(wgpu::ShaderStages::MESH),
-                            Some("VERTEX") => Ok(wgpu::ShaderStages::VERTEX),
-                            Some("NONE") => Ok(wgpu::ShaderStages::NONE),
-                            Some("TASK") => Ok(wgpu::ShaderStages::TASK),
-                            Some("VERTEX_FRAGMENT") => Ok(wgpu::ShaderStages::VERTEX_FRAGMENT),
-                            Some(v) => Err(anyhow!("x_x :: invalid OMI yaml! invalid `visibility` value: {v}")),
-                            None => Err(anyhow!("x_x :: invalid OMI yaml! `visibility` must be a string")),
-                        }
-                    })
-                    .try_fold(wgpu::ShaderStages::NONE, |acc, x| x.map(|s| acc | s))?;
-                let group_type = match parse_yaml!(entry.get("type"), as_str, "type") {
-                    "BUFFER" => {
-                        let buf = unwrap_yaml!(entry.get("buffer"), "buffer");
-                        let min_binding_size = unwrap_yaml!(buf.get("min_binding_size"), "min_binding_size").as_u64();
-                        BindingType::Buffer { 
-                            ty: match parse_yaml!(buf.get("type"), as_str, "type") {
-                                "UNIFORM" => wgpu::BufferBindingType::Uniform,
-                                "STORAGE" => wgpu::BufferBindingType::Storage { read_only: false },
-                                "READ_ONLY_STORAGE" => wgpu::BufferBindingType::Storage { read_only: true },
-                                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid buffer `type` value: {}", other)),
-                            },
-                            has_dynamic_offset: parse_yaml!(buf.get("has_dynamic_offset"), as_bool, "has_dynamic_offset"), 
-                            min_binding_size: match min_binding_size {
-                                Some(x) => Some(NonZero::new(x).ok_or(anyhow!("x_x :: invalid OMI yaml! field `min_binding_size` is zero"))?),
-                                None => None
-                            },
-                        }
-                    },
-                    "SAMPLER" => {
-                        BindingType::Sampler(match parse_yaml!(entry.get("sampler"), as_str, "sampler") {
-                            "FILTERING" => wgpu::SamplerBindingType::Filtering,
-                            "COMPARISON" => wgpu::SamplerBindingType::Comparison,
-                            "NONFILTERING" => wgpu::SamplerBindingType::NonFiltering, 
-                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `sampler` value: {}", other)),
-                        })
-                    },
-                    "TEXTURE" => {
-                        let tex = unwrap_yaml!(entry.get("texture"), "texture");
-                        BindingType::Texture { 
-                            sample_type: match parse_yaml!(tex.get("sampler_type"), as_str, "sampler_type") {
-                                "FLOAT" => wgpu::TextureSampleType::Float { filterable: parse_yaml!(tex.get("filterable"), as_bool, "filterable") },
-                                "DEPTH" => wgpu::TextureSampleType::Depth,
-                                "SINT" => wgpu::TextureSampleType::Sint,
-                                "UINT" => wgpu::TextureSampleType::Uint,   
-                                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `sample_type` value: {}", other)),
-                            }, 
-                            view_dimension: match parse_yaml!(tex.get("view_dimension"), as_str, "view_dimension") {
-                                "D1" => wgpu::TextureViewDimension::D1,
-                                "D2" => wgpu::TextureViewDimension::D2,
-                                "D2ARRAY" => wgpu::TextureViewDimension::D2Array,
-                                "CUBE" => wgpu::TextureViewDimension::Cube,
-                                "CUBEARRAY" => wgpu::TextureViewDimension::CubeArray,
-                                "D3" => wgpu::TextureViewDimension::D3,
-                                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `view_dimension` value: {}", other)),
-                            }, 
-                            multisampled: parse_yaml!(tex.get("multisampled"), as_bool, "multisampled")
-                        }
-                    },
-                    "STORAGE_TEXTURE" => {
-                        let st_tex = unwrap_yaml!(entry.get("storage_texture"), "storage_texture");
-                        BindingType::StorageTexture { 
-                            access: match parse_yaml!(st_tex.get("access"), as_str, "access") {
-                                "ATOMIC" => wgpu::StorageTextureAccess::Atomic,
-                                "READ_ONLY" => wgpu::StorageTextureAccess::ReadOnly,
-                                "READ_WRITE" => wgpu::StorageTextureAccess::ReadWrite,
-                                "WRITE_ONLY" => wgpu::StorageTextureAccess::WriteOnly,
-                                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `access` value: {}", other)),
-                            },
-                            format: match parse_yaml!(st_tex.get("format"), as_str, "format") {
-                                "R8UNORM" => wgpu::TextureFormat::R8Unorm,
-                                "R8SNORM" => wgpu::TextureFormat::R8Snorm,
-                                "R8UINT" => wgpu::TextureFormat::R8Uint,
-                                "R8SINT" => wgpu::TextureFormat::R8Sint,
-                                "R16UINT" => wgpu::TextureFormat::R16Uint,
-                                "R16SINT" => wgpu::TextureFormat::R16Sint,
-                                "R16UNORM" => wgpu::TextureFormat::R16Unorm,
-                                "R16SNORM" => wgpu::TextureFormat::R16Snorm,
-                                "R16FLOAT" => wgpu::TextureFormat::R16Float,
-                                "RG8UNORM" => wgpu::TextureFormat::Rg8Unorm,
-                                "RG8SNORM" => wgpu::TextureFormat::Rg8Snorm,
-                                "RG8UINT" => wgpu::TextureFormat::Rg8Uint,
-                                "RG8SINT" => wgpu::TextureFormat::Rg8Sint,
-                                "R32UINT" => wgpu::TextureFormat::R32Uint,
-                                "R32SINT" => wgpu::TextureFormat::R32Sint,
-                                "R32FLOAT" => wgpu::TextureFormat::R32Float,
-                                "RG16UINT" => wgpu::TextureFormat::Rg16Uint,
-                                "RG16SINT" => wgpu::TextureFormat::Rg16Sint,
-                                "RG16UNORM" => wgpu::TextureFormat::Rg16Unorm,
-                                "RG16SNORM" => wgpu::TextureFormat::Rg16Snorm,
-                                "RG16FLOAT" => wgpu::TextureFormat::Rg16Float,
-                                "RGBA8UNORM" => wgpu::TextureFormat::Rgba8Unorm,
-                                "RGBA8UNORMSRGB" => wgpu::TextureFormat::Rgba8UnormSrgb,
-                                "RGBA8SNORM" => wgpu::TextureFormat::Rgba8Snorm,
-                                "RGBA8UINT" => wgpu::TextureFormat::Rgba8Uint,
-                                "RGBA8SINT" => wgpu::TextureFormat::Rgba8Sint,
-                                "BGRA8UNORM" => wgpu::TextureFormat::Bgra8Unorm,
-                                "BGRA8UNORMSRGB" => wgpu::TextureFormat::Bgra8UnormSrgb,
-                                "RGB9E5UFLOAT" => wgpu::TextureFormat::Rgb9e5Ufloat,
-                                "RGB10A2UINT" => wgpu::TextureFormat::Rgb10a2Uint,
-                                "RGB10A2UNORM" => wgpu::TextureFormat::Rgb10a2Unorm,
-                                "RG11B10UFLOAT" => wgpu::TextureFormat::Rg11b10Ufloat,
-                                "R64UINT" => wgpu::TextureFormat::R64Uint,
-                                "RG32UINT" => wgpu::TextureFormat::Rg32Uint,
-                                "RG32SINT" => wgpu::TextureFormat::Rg32Sint,
-                                "RG32FLOAT" => wgpu::TextureFormat::Rg32Float,
-                                "RGBA16UINT" => wgpu::TextureFormat::Rgba16Uint,
-                                "RGBA16SINT" => wgpu::TextureFormat::Rgba16Sint,
-                                "RGBA16UNORM" => wgpu::TextureFormat::Rgba16Unorm,
-                                "RGBA16SNORM" => wgpu::TextureFormat::Rgba16Snorm,
-                                "RGBA16FLOAT" => wgpu::TextureFormat::Rgba16Float,
-                                "RGBA32UINT" => wgpu::TextureFormat::Rgba32Uint,
-                                "RGBA32SINT" => wgpu::TextureFormat::Rgba32Sint,
-                                "RGBA32FLOAT" => wgpu::TextureFormat::Rgba32Float,
-                                "STENCIL8" => wgpu::TextureFormat::Stencil8,
-                                "DEPTH16UNORM" => wgpu::TextureFormat::Depth16Unorm,
-                                "DEPTH24PLUS" => wgpu::TextureFormat::Depth24Plus,
-                                "DEPTH24PLUSSTENCIL8" => wgpu::TextureFormat::Depth24PlusStencil8,
-                                "DEPTH32FLOAT" => wgpu::TextureFormat::Depth32Float,
-                                "DEPTH32FLOATSTENCIL8" => wgpu::TextureFormat::Depth32FloatStencil8,
-                                "NV12" => wgpu::TextureFormat::NV12,
-                                "BC1RGBAUNORM" => wgpu::TextureFormat::Bc1RgbaUnorm,
-                                "BC1RGBAUNORMSRGB" => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
-                                "BC2RGBAUNORM" => wgpu::TextureFormat::Bc2RgbaUnorm,
-                                "BC2RGBAUNORMSRGB" => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
-                                "BC3RGBAUNORM" => wgpu::TextureFormat::Bc3RgbaUnorm,
-                                "BC3RGBAUNORMSRGB" => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
-                                "BC4RUNORM" => wgpu::TextureFormat::Bc4RUnorm,
-                                "BC4RSNORM" => wgpu::TextureFormat::Bc4RSnorm,
-                                "BC5RGUNORM" => wgpu::TextureFormat::Bc5RgUnorm,
-                                "BC5RGSNORM" => wgpu::TextureFormat::Bc5RgSnorm,
-                                "BC6HRGBUFLOAT" => wgpu::TextureFormat::Bc6hRgbUfloat,
-                                "BC6HRGBFLOAT" => wgpu::TextureFormat::Bc6hRgbFloat,
-                                "BC7RGBAUNORM" => wgpu::TextureFormat::Bc7RgbaUnorm,
-                                "BC7RGBAUNORMSRGB" => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
-                                "ETC2RGB8UNORM" => wgpu::TextureFormat::Etc2Rgb8Unorm,
-                                "ETC2RGB8UNORMSRGB" => wgpu::TextureFormat::Etc2Rgb8UnormSrgb,
-                                "ETC2RGB8A1UNORM" => wgpu::TextureFormat::Etc2Rgb8A1Unorm,
-                                "ETC2RGB8A1UNORMSRGB" => wgpu::TextureFormat::Etc2Rgb8A1UnormSrgb,
-                                "ETC2RGBA8UNORM" => wgpu::TextureFormat::Etc2Rgba8Unorm,
-                                "ETC2RGBA8UNORMSRGB" => wgpu::TextureFormat::Etc2Rgba8UnormSrgb,
-                                "EACR11UNORM" => wgpu::TextureFormat::EacR11Unorm,
-                                "EACR11SNORM" => wgpu::TextureFormat::EacR11Snorm,
-                                "EACRG11UNORM" => wgpu::TextureFormat::EacRg11Unorm,
-                                "EACRG11SNORM" => wgpu::TextureFormat::EacRg11Snorm,
-                                "ASTC" => wgpu::TextureFormat::Astc { 
-                                    block: match parse_yaml!(st_tex.get("format"), as_str, "format") {
-                                        "B4X4" => wgpu::AstcBlock::B4x4,
-                                        "B5X4" => wgpu::AstcBlock::B5x4,
-                                        "B5X5" => wgpu::AstcBlock::B5x5,
-                                        "B6X5" => wgpu::AstcBlock::B6x5,
-                                        "B6X6" => wgpu::AstcBlock::B6x6,
-                                        "B8X5" => wgpu::AstcBlock::B8x5,
-                                        "B8X6" => wgpu::AstcBlock::B8x6,
-                                        "B8X8" => wgpu::AstcBlock::B8x8,
-                                        "B10X5" => wgpu::AstcBlock::B10x5,
-                                        "B10X6" => wgpu::AstcBlock::B10x6,
-                                        "B10X8" => wgpu::AstcBlock::B10x8,
-                                        "B10X10" => wgpu::AstcBlock::B10x10,
-                                        "B12X10" => wgpu::AstcBlock::B12x10,
-                                        "B12X12" => wgpu::AstcBlock::B12x12,
-                                        other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `block` value: {}", other))
-                                    }, channel: match parse_yaml!(st_tex.get("channel"), as_str, "channel") {
-                                        "HDR" => wgpu::AstcChannel::Hdr,
-                                        "UNORM" => wgpu::AstcChannel::Unorm,
-                                        "UNORM_SRGB" => wgpu::AstcChannel::UnormSrgb,
-                                        other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `channel` value: {}", other))
-                                    } },
-                                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `format` value: {}", other)),
-                            },
-                            view_dimension: match parse_yaml!(st_tex.get("view_dimension"), as_str, "view_dimension") {
-                                "D1" => wgpu::TextureViewDimension::D1,
-                                "D2" => wgpu::TextureViewDimension::D2,
-                                "D2ARRAY" => wgpu::TextureViewDimension::D2Array,
-                                "CUBE" => wgpu::TextureViewDimension::Cube,
-                                "CUBEARRAY" => wgpu::TextureViewDimension::CubeArray,
-                                "D3" => wgpu::TextureViewDimension::D3,
-                                other => return Err(anyhow!("invalid `view_dimension` value: {}", other)),
-                            }, 
-                        }
-                    },
-                    "ACCELERATION_STRUCTURE" => {
-                        BindingType::AccelerationStructure { vertex_return: parse_yaml!(entry.get("vertex_return"), as_bool, "vertex_return") }
-                    },
-                    other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid bind group `type` value: {}", other)),
-                };
-                let count_parse = unwrap_yaml!(entry.get("count"), "count").as_u64();
-                let count = match count_parse {
-                    Some(x) => Some(NonZero::new(x as u32).ok_or(anyhow!("x_x :: invalid OMI yaml! field `min_binding_size` is zero"))?),
-                    None => None
-                };
-                entries.push(BindGroupLayoutEntry {
-                    binding: e as u32,
-                    visibility: vis,
-                    ty: group_type,
-                    count
-                });
-                resource_labels.push(parse_yaml!(entry.get("resource"), as_str, "resource"))
-            }
-            let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &entries
-            });
-            println!("{:#?}", entries);
-            let binding = resource_labels.into_iter()
-                .map(|x| { println!("{:?} {:?}", x, Into::<ResourceId>::into(&*x)); state.get_resource_mut(&(*x).into()).map_err(|e| anyhow!("x_x :: invalid OMI yaml! when parsing {x}: {}", e.to_string())) })
-                .collect::<Result<Vec<RefMut<Box<dyn Resource + 'static>>>, _>>()?;
-            let resources: Vec<_> = binding
+        let label = parse_yaml!(group.get("label"), as_str, "label");
+        let entries_yaml = parse_yaml!(group.get("entries"), as_sequence, "entries");
+        let mut entries = Vec::with_capacity(entries_yaml.len());
+        let mut buffer_labels = Vec::with_capacity(entries_yaml.len());
+        for e in 0..entries_yaml.len() {
+            let entry = &entries_yaml[e];
+            let vis = parse_yaml!(entry.get("visibility"), as_sequence, "visibility")
                 .iter()
-                .enumerate()
-                .map(|(i, x)| {
-                    //x.try_borrow_mut().map_err(|_| anyhow!("x_x :: tried to load a material with a resource that was already borrowed mutably in one of its bind groups"))?;
-                    //let raw = *x as *const Box<dyn Resource>;
-                    //println!()
-                    let resource = x;
-                    Ok::<_, anyhow::Error>(BindGroupEntry {
-                        binding: i as u32,
-                        resource: resource.binding()?
-                    })
+                .map(|value| {
+                    match value.as_str() {
+                        Some("FRAGMENT") => Ok(wgpu::ShaderStages::FRAGMENT),
+                        Some("COMPUTE") => Ok(wgpu::ShaderStages::COMPUTE),
+                        Some("MESH") => Ok(wgpu::ShaderStages::MESH),
+                        Some("VERTEX") => Ok(wgpu::ShaderStages::VERTEX),
+                        Some("NONE") => Ok(wgpu::ShaderStages::NONE),
+                        Some("TASK") => Ok(wgpu::ShaderStages::TASK),
+                        Some("VERTEX_FRAGMENT") => Ok(wgpu::ShaderStages::VERTEX_FRAGMENT),
+                        Some(v) => Err(anyhow!("x_x :: invalid OMI yaml! invalid `visibility` value: {v}")),
+                        None => Err(anyhow!("x_x :: invalid OMI yaml! `visibility` must be a string")),
+                    }
                 })
-                .collect::<Result<Vec<BindGroupEntry<'_>>, _>>()?;
-            bind_groups.push((i, device.create_bind_group(&BindGroupDescriptor {
-                label: Some(label),
-                layout: &layout,
-                entries: &resources
-            })));
-            bind_group_layouts.push(Arc::new(layout));
+                .try_fold(wgpu::ShaderStages::NONE, |acc, x| x.map(|s| acc | s))?;
+            let group_type = match parse_yaml!(entry.get("type"), as_str, "type") {
+                "BUFFER" => {
+                    let buf = unwrap_yaml!(entry.get("buffer"), "buffer");
+                    let min_binding_size = unwrap_yaml!(buf.get("min_binding_size"), "min_binding_size").as_u64();
+                    BindingType::Buffer { 
+                        ty: match parse_yaml!(buf.get("type"), as_str, "type") {
+                            "UNIFORM" => wgpu::BufferBindingType::Uniform,
+                            "STORAGE" => wgpu::BufferBindingType::Storage { read_only: false },
+                            "READ_ONLY_STORAGE" => wgpu::BufferBindingType::Storage { read_only: true },
+                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid buffer `type` value: {}", other)),
+                        },
+                        has_dynamic_offset: parse_yaml!(buf.get("has_dynamic_offset"), as_bool, "has_dynamic_offset"), 
+                        min_binding_size: match min_binding_size {
+                            Some(x) => Some(NonZero::new(x).ok_or(anyhow!("x_x :: invalid OMI yaml! field `min_binding_size` is zero"))?),
+                            None => None
+                        },
+                    }
+                },
+                "SAMPLER" => {
+                    BindingType::Sampler(match parse_yaml!(entry.get("sampler"), as_str, "sampler") {
+                        "FILTERING" => wgpu::SamplerBindingType::Filtering,
+                        "COMPARISON" => wgpu::SamplerBindingType::Comparison,
+                        "NONFILTERING" => wgpu::SamplerBindingType::NonFiltering, 
+                        other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `sampler` value: {}", other)),
+                    })
+                },
+                "TEXTURE" => {
+                    let tex = unwrap_yaml!(entry.get("texture"), "texture");
+                    BindingType::Texture { 
+                        sample_type: match parse_yaml!(tex.get("sampler_type"), as_str, "sampler_type") {
+                            "FLOAT" => wgpu::TextureSampleType::Float { filterable: parse_yaml!(tex.get("filterable"), as_bool, "filterable") },
+                            "DEPTH" => wgpu::TextureSampleType::Depth,
+                            "SINT" => wgpu::TextureSampleType::Sint,
+                            "UINT" => wgpu::TextureSampleType::Uint,   
+                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `sample_type` value: {}", other)),
+                        }, 
+                        view_dimension: match parse_yaml!(tex.get("view_dimension"), as_str, "view_dimension") {
+                            "D1" => wgpu::TextureViewDimension::D1,
+                            "D2" => wgpu::TextureViewDimension::D2,
+                            "D2ARRAY" => wgpu::TextureViewDimension::D2Array,
+                            "CUBE" => wgpu::TextureViewDimension::Cube,
+                            "CUBEARRAY" => wgpu::TextureViewDimension::CubeArray,
+                            "D3" => wgpu::TextureViewDimension::D3,
+                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `view_dimension` value: {}", other)),
+                        }, 
+                        multisampled: parse_yaml!(tex.get("multisampled"), as_bool, "multisampled")
+                    }
+                },
+                "STORAGE_TEXTURE" => {
+                    let st_tex = unwrap_yaml!(entry.get("storage_texture"), "storage_texture");
+                    BindingType::StorageTexture { 
+                        access: match parse_yaml!(st_tex.get("access"), as_str, "access") {
+                            "ATOMIC" => wgpu::StorageTextureAccess::Atomic,
+                            "READ_ONLY" => wgpu::StorageTextureAccess::ReadOnly,
+                            "READ_WRITE" => wgpu::StorageTextureAccess::ReadWrite,
+                            "WRITE_ONLY" => wgpu::StorageTextureAccess::WriteOnly,
+                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `access` value: {}", other)),
+                        },
+                        format: match parse_yaml!(st_tex.get("format"), as_str, "format") {
+                            "R8UNORM" => wgpu::TextureFormat::R8Unorm,
+                            "R8SNORM" => wgpu::TextureFormat::R8Snorm,
+                            "R8UINT" => wgpu::TextureFormat::R8Uint,
+                            "R8SINT" => wgpu::TextureFormat::R8Sint,
+                            "R16UINT" => wgpu::TextureFormat::R16Uint,
+                            "R16SINT" => wgpu::TextureFormat::R16Sint,
+                            "R16UNORM" => wgpu::TextureFormat::R16Unorm,
+                            "R16SNORM" => wgpu::TextureFormat::R16Snorm,
+                            "R16FLOAT" => wgpu::TextureFormat::R16Float,
+                            "RG8UNORM" => wgpu::TextureFormat::Rg8Unorm,
+                            "RG8SNORM" => wgpu::TextureFormat::Rg8Snorm,
+                            "RG8UINT" => wgpu::TextureFormat::Rg8Uint,
+                            "RG8SINT" => wgpu::TextureFormat::Rg8Sint,
+                            "R32UINT" => wgpu::TextureFormat::R32Uint,
+                            "R32SINT" => wgpu::TextureFormat::R32Sint,
+                            "R32FLOAT" => wgpu::TextureFormat::R32Float,
+                            "RG16UINT" => wgpu::TextureFormat::Rg16Uint,
+                            "RG16SINT" => wgpu::TextureFormat::Rg16Sint,
+                            "RG16UNORM" => wgpu::TextureFormat::Rg16Unorm,
+                            "RG16SNORM" => wgpu::TextureFormat::Rg16Snorm,
+                            "RG16FLOAT" => wgpu::TextureFormat::Rg16Float,
+                            "RGBA8UNORM" => wgpu::TextureFormat::Rgba8Unorm,
+                            "RGBA8UNORMSRGB" => wgpu::TextureFormat::Rgba8UnormSrgb,
+                            "RGBA8SNORM" => wgpu::TextureFormat::Rgba8Snorm,
+                            "RGBA8UINT" => wgpu::TextureFormat::Rgba8Uint,
+                            "RGBA8SINT" => wgpu::TextureFormat::Rgba8Sint,
+                            "BGRA8UNORM" => wgpu::TextureFormat::Bgra8Unorm,
+                            "BGRA8UNORMSRGB" => wgpu::TextureFormat::Bgra8UnormSrgb,
+                            "RGB9E5UFLOAT" => wgpu::TextureFormat::Rgb9e5Ufloat,
+                            "RGB10A2UINT" => wgpu::TextureFormat::Rgb10a2Uint,
+                            "RGB10A2UNORM" => wgpu::TextureFormat::Rgb10a2Unorm,
+                            "RG11B10UFLOAT" => wgpu::TextureFormat::Rg11b10Ufloat,
+                            "R64UINT" => wgpu::TextureFormat::R64Uint,
+                            "RG32UINT" => wgpu::TextureFormat::Rg32Uint,
+                            "RG32SINT" => wgpu::TextureFormat::Rg32Sint,
+                            "RG32FLOAT" => wgpu::TextureFormat::Rg32Float,
+                            "RGBA16UINT" => wgpu::TextureFormat::Rgba16Uint,
+                            "RGBA16SINT" => wgpu::TextureFormat::Rgba16Sint,
+                            "RGBA16UNORM" => wgpu::TextureFormat::Rgba16Unorm,
+                            "RGBA16SNORM" => wgpu::TextureFormat::Rgba16Snorm,
+                            "RGBA16FLOAT" => wgpu::TextureFormat::Rgba16Float,
+                            "RGBA32UINT" => wgpu::TextureFormat::Rgba32Uint,
+                            "RGBA32SINT" => wgpu::TextureFormat::Rgba32Sint,
+                            "RGBA32FLOAT" => wgpu::TextureFormat::Rgba32Float,
+                            "STENCIL8" => wgpu::TextureFormat::Stencil8,
+                            "DEPTH16UNORM" => wgpu::TextureFormat::Depth16Unorm,
+                            "DEPTH24PLUS" => wgpu::TextureFormat::Depth24Plus,
+                            "DEPTH24PLUSSTENCIL8" => wgpu::TextureFormat::Depth24PlusStencil8,
+                            "DEPTH32FLOAT" => wgpu::TextureFormat::Depth32Float,
+                            "DEPTH32FLOATSTENCIL8" => wgpu::TextureFormat::Depth32FloatStencil8,
+                            "NV12" => wgpu::TextureFormat::NV12,
+                            "BC1RGBAUNORM" => wgpu::TextureFormat::Bc1RgbaUnorm,
+                            "BC1RGBAUNORMSRGB" => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+                            "BC2RGBAUNORM" => wgpu::TextureFormat::Bc2RgbaUnorm,
+                            "BC2RGBAUNORMSRGB" => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+                            "BC3RGBAUNORM" => wgpu::TextureFormat::Bc3RgbaUnorm,
+                            "BC3RGBAUNORMSRGB" => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+                            "BC4RUNORM" => wgpu::TextureFormat::Bc4RUnorm,
+                            "BC4RSNORM" => wgpu::TextureFormat::Bc4RSnorm,
+                            "BC5RGUNORM" => wgpu::TextureFormat::Bc5RgUnorm,
+                            "BC5RGSNORM" => wgpu::TextureFormat::Bc5RgSnorm,
+                            "BC6HRGBUFLOAT" => wgpu::TextureFormat::Bc6hRgbUfloat,
+                            "BC6HRGBFLOAT" => wgpu::TextureFormat::Bc6hRgbFloat,
+                            "BC7RGBAUNORM" => wgpu::TextureFormat::Bc7RgbaUnorm,
+                            "BC7RGBAUNORMSRGB" => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                            "ETC2RGB8UNORM" => wgpu::TextureFormat::Etc2Rgb8Unorm,
+                            "ETC2RGB8UNORMSRGB" => wgpu::TextureFormat::Etc2Rgb8UnormSrgb,
+                            "ETC2RGB8A1UNORM" => wgpu::TextureFormat::Etc2Rgb8A1Unorm,
+                            "ETC2RGB8A1UNORMSRGB" => wgpu::TextureFormat::Etc2Rgb8A1UnormSrgb,
+                            "ETC2RGBA8UNORM" => wgpu::TextureFormat::Etc2Rgba8Unorm,
+                            "ETC2RGBA8UNORMSRGB" => wgpu::TextureFormat::Etc2Rgba8UnormSrgb,
+                            "EACR11UNORM" => wgpu::TextureFormat::EacR11Unorm,
+                            "EACR11SNORM" => wgpu::TextureFormat::EacR11Snorm,
+                            "EACRG11UNORM" => wgpu::TextureFormat::EacRg11Unorm,
+                            "EACRG11SNORM" => wgpu::TextureFormat::EacRg11Snorm,
+                            "ASTC" => wgpu::TextureFormat::Astc { 
+                                block: match parse_yaml!(st_tex.get("format"), as_str, "format") {
+                                    "B4X4" => wgpu::AstcBlock::B4x4,
+                                    "B5X4" => wgpu::AstcBlock::B5x4,
+                                    "B5X5" => wgpu::AstcBlock::B5x5,
+                                    "B6X5" => wgpu::AstcBlock::B6x5,
+                                    "B6X6" => wgpu::AstcBlock::B6x6,
+                                    "B8X5" => wgpu::AstcBlock::B8x5,
+                                    "B8X6" => wgpu::AstcBlock::B8x6,
+                                    "B8X8" => wgpu::AstcBlock::B8x8,
+                                    "B10X5" => wgpu::AstcBlock::B10x5,
+                                    "B10X6" => wgpu::AstcBlock::B10x6,
+                                    "B10X8" => wgpu::AstcBlock::B10x8,
+                                    "B10X10" => wgpu::AstcBlock::B10x10,
+                                    "B12X10" => wgpu::AstcBlock::B12x10,
+                                    "B12X12" => wgpu::AstcBlock::B12x12,
+                                    other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `block` value: {}", other))
+                                }, channel: match parse_yaml!(st_tex.get("channel"), as_str, "channel") {
+                                    "HDR" => wgpu::AstcChannel::Hdr,
+                                    "UNORM" => wgpu::AstcChannel::Unorm,
+                                    "UNORM_SRGB" => wgpu::AstcChannel::UnormSrgb,
+                                    other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `channel` value: {}", other))
+                                } },
+                            other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid `format` value: {}", other)),
+                        },
+                        view_dimension: match parse_yaml!(st_tex.get("view_dimension"), as_str, "view_dimension") {
+                            "D1" => wgpu::TextureViewDimension::D1,
+                            "D2" => wgpu::TextureViewDimension::D2,
+                            "D2ARRAY" => wgpu::TextureViewDimension::D2Array,
+                            "CUBE" => wgpu::TextureViewDimension::Cube,
+                            "CUBEARRAY" => wgpu::TextureViewDimension::CubeArray,
+                            "D3" => wgpu::TextureViewDimension::D3,
+                            other => return Err(anyhow!("invalid `view_dimension` value: {}", other)),
+                        }, 
+                    }
+                },
+                "ACCELERATION_STRUCTURE" => {
+                    BindingType::AccelerationStructure { vertex_return: parse_yaml!(entry.get("vertex_return"), as_bool, "vertex_return") }
+                },
+                other => return Err(anyhow!("x_x :: invalid OMI yaml! invalid bind group `type` value: {}", other)),
+            };
+            let count_parse = unwrap_yaml!(entry.get("count"), "count").as_u64();
+            let count = match count_parse {
+                Some(x) => Some(NonZero::new(x as u32).ok_or(anyhow!("x_x :: invalid OMI yaml! field `min_binding_size` is zero"))?),
+                None => None
+            };
+            entries.push(BindGroupLayoutEntry {
+                binding: e as u32,
+                visibility: vis,
+                ty: group_type,
+                count
+            });
+            buffer_labels.push(parse_yaml!(entry.get("resource"), as_str, "resource"))
         }
+        let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some(label),
+            entries: &entries
+        });
 
+
+        let indices: Vec<usize> = buffer_labels
+            .into_iter()
+            .map(|x| renderer.shader_resources.index_of(x))
+            .collect();
+
+        let binding: Vec<&Box<dyn Resource>> = indices
+            .iter()
+            .map(|&idx| renderer.shader_resources.get(idx))
+            .collect::<anyhow::Result<_>>()?;
+
+        let resources: Vec<_> = binding
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                Ok::<_, anyhow::Error>(BindGroupEntry {
+                    binding: i as u32,
+                    resource: x.binding()?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        bind_groups.push(device.create_bind_group(&BindGroupDescriptor {
+            label: Some(label),
+            layout: &layout,
+            entries: &resources
+        }));
+        bind_group_layouts.push(Arc::new(layout));
     }
     let mut buffers = Vec::new();
     if let Some(byml) = root.get("buffers") {
@@ -384,7 +390,13 @@ pub async fn load_shader_raw(
         }
     }
 
-    let layouts: Vec<_> = bind_group_layouts.iter().map(|arc| arc.as_ref()).collect();
+    let binding: Vec<_> = globals.iter()
+        .map(|index| renderer.shared_bind_groups.get(*index).map(|arc| arc.1.clone()))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let layouts: Vec<_> = binding
+        .iter()
+        .chain(bind_group_layouts.iter())
+        .map(|arc| arc.as_ref()).collect();
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(file_name),
         bind_group_layouts: &layouts,
@@ -405,7 +417,7 @@ pub async fn load_shader_raw(
 
     let vert_text = load_string(&vert_name).await?;//.expect("shader non existent in loading material");
     let frag_text = load_string(&frag_name).await?;//.expect("shader non existent in loading material");
-    println!("{}", format!("{file_name}.wgsl"));
+
     let vert_descriptor = wgpu::ShaderModuleDescriptor {
         label: Some(vert_name),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&vert_text)),
@@ -425,17 +437,9 @@ pub async fn load_shader_raw(
                 module: &vert_shader,
                 entry_point: Some(frag_fn),
                 compilation_options: Default::default(),
-                targets: &[Some(mesh::Material::screen_target(state.graphics().config.format))]
+                targets: &[Some(mesh::Material::screen_target(renderer.config.format))]
             }),
-            primitive: PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
+            primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: texture::Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
@@ -470,17 +474,9 @@ pub async fn load_shader_raw(
                 module: &frag_shader,
                 entry_point: Some(frag_fn),
                 compilation_options: Default::default(),
-                targets: &[Some(mesh::Material::screen_target(state.graphics().config.format))]
+                targets: &[Some(mesh::Material::screen_target(renderer.config.format))]
             }),
-            primitive: PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
+            primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: texture::Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
@@ -503,7 +499,7 @@ pub async fn load_shader_raw(
     //println!("{:?}", layouts);
 
 
-    let material = Material::with_pipeline(pipeline, pipeline_layout, bind_groups, globals);
+    let material = Material::with_pipeline(file_name.to_owned(), pipeline, pipeline_layout, globals, bind_groups);
 
     return Ok(material)
 }
@@ -526,18 +522,6 @@ pub trait Resource: Any+Debug {
     }
 }
 
-/*impl<T: Any+Debug> Resource for T {
-    /*default fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-    default fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }*/
-    default fn binding<'a>(&'a self) -> anyhow::Result<BindingResource<'a>>  {
-        Err(anyhow!("x_x :: tried to get a BindingResource from an incompatible Resource (only certain types can become BindingResources)"))
-    }
-}*/
-
 impl Resource for wgpu::Buffer {
     // default fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
     //     self
@@ -553,6 +537,7 @@ impl Resource for std::time::Instant {}
 impl Resource for Arc<winit::window::Window> {}
 impl Resource for wgpu::BindGroup {}
 impl Resource for Arc<wgpu::BindGroup> {}
+impl Resource for String {}
 
 /// .omi (ostinato material info) is info on how to construct a material from
 /// .omtl (ostinto mtl) is a bundle of material infos
@@ -562,7 +547,7 @@ pub async fn load_model(
     //device: &wgpu::Device,
     //queue: &wgpu::Queue,
     //layout: &wgpu::BindGroupLayout,
-    state: &mut State
+    renderer: &mut Renderer
 ) -> anyhow::Result<mesh::Model> {
     //let device = state.graphics().device.clone();
     //let queue = &wgpu.queue;
@@ -572,13 +557,12 @@ pub async fn load_model(
     let mut obj_reader = BufReader::new(obj_cursor);
     let omtl_text = load_string(&format!("{file_name}.omtl")).await?;
     let omtl_yaml: Value = serde_yaml::from_str(&omtl_text)?;
-    println!("!!");
     let omi_names = parse_yaml!(omtl_yaml.get("materials"), as_sequence, "materials");
     let omi_index = parse_yaml!(omtl_yaml.get("objects"), as_sequence, "objects");
     let omis: Vec<&str> = omi_names.iter().map(|x| x.as_str().unwrap()).collect();
     let mut mids = Vec::with_capacity(omis.len());
     for i in omis {
-        mids.push(load_shader(i, state).await?);
+        mids.push(load_shader(i, renderer, None, None).await?);
     }
 
     let (models, _) = tobj::load_obj_buf_async(
@@ -667,12 +651,10 @@ pub async fn load_model(
             let s = omi_index.iter().find(|x| {
                     if let Some(name) = x.get("name") {
                         let n = name.as_str().expect("x_x :: invalid OMI yaml! invalid value for field `name`");
-                        println!("name: {}, yaml: {n}", m.name);
                         return n == m.name
                     };
                     if let Some(index) = x.get("index") {
                         let n =  index.as_u64().expect("x_x :: invalid OMI yaml! invalid value for field `name`");
-                        println!("index: {}, yaml: {n}", i);
                         return n == i as u64
                     };
                     false
@@ -687,13 +669,107 @@ pub async fn load_model(
             } else {
                 d
             };
-            println!("ssss{:#?} {:#?}", s, mid);
 
             let mat = mids[mid as usize];
 
-            mesh::Mesh::new(vertices, m.mesh.indices, mat, Some(file_name.to_string()), state)
+            mesh::Mesh::new(vertices, m.mesh.indices, mat, renderer)
         })
         .collect::<Vec<_>>();
 
     Ok(mesh::Model { meshes })
+}
+
+
+
+
+
+
+
+struct Interner {
+    map: HashMap<String, usize>,
+    id: usize,
+    free: Vec<usize>
+}
+impl Interner {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            id: 0,
+            free: Vec::new()
+        }
+    }
+    pub fn intern(&mut self, s: &str) -> usize {
+        if let Some(&id) = self.map.get(s) {
+            return id;
+        }
+        let id = if self.free.len() > 0 {
+            self.free.pop().unwrap()
+        } else {
+            self.id += 1;
+            self.id - 1
+        };
+        self.map.insert(s.to_owned(), id);
+        id
+    }
+    pub fn remove(&mut self, s: &str) -> anyhow::Result<()> {
+        let id = self.map.remove(s).ok_or(anyhow::Error::msg("x_x :: removed uninterned string"))?;
+        self.free.push(id);
+        Ok(())
+    }
+}
+
+pub struct ResourceCollection<T: 'static> {
+    interner: Interner,
+    pub resources: Vec<T>
+}
+impl<T: 'static> ResourceCollection<T> {
+    pub fn new() -> Self {
+        Self {
+            interner: Interner::new(),
+            resources: Vec::new()
+        }
+    }
+
+    pub fn insert(&mut self, key: &str, value: T) -> usize {
+        let id = self.interner.intern(key);
+        if id == self.resources.len() {
+            self.resources.reserve(1);
+        }
+        self.resources.insert(id, value);
+        id
+    }
+    pub fn index_of(&mut self, key: &str) -> usize {
+        return self.interner.intern(key);
+    }
+    pub fn remove(&mut self, key: &str) -> anyhow::Result<()> {
+        self.interner.remove(key)?;
+        Ok(())
+    }
+
+    pub fn get(&self, index: usize) -> anyhow::Result<&T> {
+        if self.resources.len() <= index {
+            return Err(anyhow!("Tried to get resource collection item greater that collection len"))
+        }
+        Ok(&self.resources[index])
+    }
+    pub fn get_mut(&mut self, index: usize) -> anyhow::Result<&mut T> {
+        Ok(&mut self.resources[index])
+    }
+}
+
+impl ResourceCollection<Box<dyn Resource>> {
+    pub fn downcast<U: 'static>(&self, index: usize) -> anyhow::Result<&U> where {
+        let resource = self.get(index).unwrap();
+        let any = resource.as_ref() as &dyn Any;
+        let dc = any.downcast_ref::<U>()
+            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"));
+        dc
+    }
+    pub fn downcast_mut<U: 'static>(&mut self, index: usize) -> anyhow::Result<&mut U> {
+        let resource = self.get_mut(index).unwrap();
+        let any = resource.as_mut() as &mut dyn Any;
+        let dc = any.downcast_mut::<U>()
+            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"));
+        dc
+    }
 }
