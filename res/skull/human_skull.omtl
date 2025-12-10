@@ -1,0 +1,6 @@
+materials:
+  - skull/skull_top
+  - skull/skull_jaw
+  - skull/teeth
+objects:
+  - default: 0

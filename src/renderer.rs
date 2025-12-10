@@ -4,21 +4,25 @@ use winit::window::Window;
 
 use crate::{camera::Camera, mesh::{Material, Mesh}, resources::{Resource, ResourceCollection}, texture::Texture};
 
+/// the rendering context and everything that handles it
 pub struct Renderer {
-    pub surface: wgpu::Surface<'static>,
-    pub device: Arc<wgpu::Device>,
-    pub queue: wgpu::Queue,
-    pub config: wgpu::SurfaceConfiguration,
-    pub is_surface_configured: bool,
-    pub depth_texture: Texture,
-    pub window: Arc<Window>,
+    /// basically the window. wgpu stuff
+    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) device: Arc<wgpu::Device>,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) is_surface_configured: bool,
+    pub(crate) depth_texture: Texture,
+    pub(crate) window: Arc<Window>,
 
-    pub start: Instant,
-
+    /// shader resources for bind groups such as buffers
+    /// use the `downcast_ref` and `downcast_mut` methods for these
     pub shader_resources: ResourceCollection<Box<dyn Resource>>,
-    pub shaders: ResourceCollection<Material>,
+    /// NOT SHADERS!!! MATERIALS!!! im a bot
+    pub materials: ResourceCollection<Material>,
+    /// shared bindgroups so that you dont have to go through the process of remaking them every damn time
+    /// not sure if this has a performance difference but i think so?
     pub shared_bind_groups: ResourceCollection<(Arc<wgpu::BindGroup>, Arc<wgpu::BindGroupLayout>)>,
-    //pub models: ResourceCollection<Model>,
 }
 
 #[repr(C)]
@@ -28,9 +32,9 @@ pub struct ResolutionUniform {
 }
 
 impl Renderer {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Renderer> {
+    /// dont worry :)
+    pub(crate) async fn new(window: Arc<Window>) -> anyhow::Result<Renderer> {
         let size = window.inner_size();
-        let _start = Instant::now();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
@@ -100,17 +104,15 @@ impl Renderer {
             queue,
             config,
             is_surface_configured: false,
-            start: Instant::now(),
             depth_texture,
             window: window,
             shader_resources: ResourceCollection::new(),
-            shaders: ResourceCollection::new(),
+            materials: ResourceCollection::new(),
             shared_bind_groups: ResourceCollection::new(),
-            //models: ResourceCollection::new()
         })
     }
 
-    pub async fn init(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn init(&mut self) -> anyhow::Result<()> {
         let time_buffer = self.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Time Buffer"),
@@ -130,12 +132,11 @@ impl Renderer {
         let time = Box::new(time_buffer);
         self.shader_resources.insert("time", time);
         self.shader_resources.insert("resolution", Box::new(res_buffer));
-        self.shader_resources.insert("test", Box::new("aaa".to_owned()));
 
         Ok(())
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.is_surface_configured = true;
             self.config.width = width;
@@ -190,7 +191,7 @@ impl Renderer {
     pub fn render_with_camera(&mut self, pass: &mut wgpu::RenderPass, camera: &mut Camera, mesh: &Mesh)-> anyhow::Result<()> {
         self.shared_bind_groups.insert("CAMERA", (camera.bind_group.clone(), camera.bind_group_layout.clone()));
 
-        let m: &Material = self.shaders.get(mesh.material)?;
+        let m: &Material = self.materials.get(mesh.material)?;
         pass.set_pipeline(&m.render_pipeline);
 
         for i in 0..m.shared_bind_groups.len() {
@@ -206,4 +207,23 @@ impl Renderer {
         pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
         Ok(())
     }
+}
+
+
+pub struct Instance {
+    pub position: glam::Vec3,
+    pub rotation: glam::Quat,
+}
+impl Instance {
+    pub fn to_raw(&self) -> InstanceRaw {
+        InstanceRaw {
+            model: glam::Mat4::from_rotation_translation(self.rotation, self.position).to_cols_array_2d(),
+        }
+    }
+}
+// NEW!
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceRaw {
+    model: [[f32; 4]; 4],
 }

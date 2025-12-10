@@ -1,37 +1,36 @@
 use std::collections::HashSet;
 
 use crate::{Resource, resources::Resource};
-use vectors::Vector2;
 use winit::{event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent}, event_loop::ActiveEventLoop};
 
 #[derive(Clone, Debug, Resource)]
 pub struct MouseData {
     // mouse delta over one frame, in pixels
-    pub delta: Vector2<f64>,
+    pub delta: [f64; 2],
     // pressed mousebuttons
     pressed: HashSet<MouseButton>,
     prev_pressed: HashSet<MouseButton>,
     // is the cursor inside the window? (initialises to false, and only updates when the cursor first enters or leaves the window)
     pub cursor_inside: bool,
     // scroll delta over one fram, in pixels
-    pub scroll_delta: Vector2<f64>
+    pub scroll_delta: [f64; 2]
 }
 
 impl MouseData {
     pub fn new() -> Self {
         Self {
-            delta: Vector2::identity(),
+            delta: [0., 0.],
             pressed: HashSet::with_capacity(256),
             prev_pressed: HashSet::with_capacity(256),
             cursor_inside: false,
-            scroll_delta: Vector2::identity()
+            scroll_delta: [0.; 2]
         }
     }
 
     pub fn update(&mut self) {
         self.prev_pressed = self.pressed.clone();
-        self.delta = Vector2::identity();
-        self.scroll_delta = Vector2::identity()
+        self.delta = [0.; 2];
+        self.scroll_delta = [0.; 2];
     }
 
     pub fn is_pressed(&self, button: MouseButton) -> bool {
@@ -61,8 +60,14 @@ impl MouseData {
             },
             WindowEvent::MouseWheel { device_id: _, delta, phase: _ } => {
                 match delta {
-                    MouseScrollDelta::LineDelta(x, y) => { self.scroll_delta += <(f64, f64) as Into<Vector2<f64>>>::into((*x as f64, *y as f64)) * 20.0; },
-                    MouseScrollDelta::PixelDelta(pos) => { self.scroll_delta += <(f64, f64) as Into<Vector2<f64>>>::into((pos.x, pos.y)); }
+                    MouseScrollDelta::LineDelta(x, y) => { 
+                        self.scroll_delta[0] += *x as f64 * 20.;
+                        self.scroll_delta[1] += *y as f64 * 20.; 
+                    },
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        self.scroll_delta[0] += pos.x;
+                        self.scroll_delta[1] += pos.y; 
+                    }
                 }
             },
             _ => {}
@@ -76,7 +81,10 @@ impl MouseData {
             event: &DeviceEvent,
         ) {
         match event {
-            DeviceEvent::MouseMotion{ delta } => self.delta += (*delta).into(),
+            DeviceEvent::MouseMotion{ delta } => {
+                self.delta[0] += delta.0;
+                self.delta[1] += delta.1; 
+            },
             _ => {}
             //DeviceEvent::MouseWheel { delta }
         }

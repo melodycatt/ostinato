@@ -1,0 +1,39 @@
+entry_points:
+  vertex:
+    module: skull/skull_material.wgsl
+    function: vs_main
+  fragment:
+    module: skull/skull_material.wgsl
+    function: fs_main
+shared_bind_groups:
+  - CAMERA
+bind_groups:
+  - label: material
+    entries:
+      - binding: 0
+        visibility: [FRAGMENT]
+        type: TEXTURE
+        texture:
+          sampler_type: FLOAT
+          view_dimension: D2
+          multisampled: false
+          filterable: true
+        resource: skull/Skull_Top_BaseColor.png
+        count: null
+      - binding: 1
+        visibility: [FRAGMENT]
+        type: SAMPLER
+        sampler: FILTERING
+        count: null
+        resource: skull/Skull_Top_BaseColor.png
+      - binding: 2
+        visibility: [FRAGMENT]
+        count: null
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        resource: Skull_Top_Properties
+buffers:
+  - MODEL_VERTEX

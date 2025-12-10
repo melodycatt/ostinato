@@ -1,10 +1,10 @@
 
 mod vertex;
 mod model;
-mod shader;
+mod material;
 pub use vertex::*;
 pub use model::*;
-pub use shader::*;
+pub use material::*;
 
 use std::fmt::Debug;
 use std::ops::Range;
@@ -170,7 +170,7 @@ pub fn new_cube(position: [f32; 3], scale: [f32; 3], shader_path: &str, renderer
             4, 6, 5,   
             6, 7, 5
         ];
-    Mesh::new(verts, indices, renderer.shaders.index_of(shader_path), renderer)
+    Mesh::new(verts, indices, renderer.materials.index_of(shader_path), renderer)
 }
 
 pub trait DrawModel<'a> {

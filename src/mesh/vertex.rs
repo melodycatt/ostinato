@@ -1,23 +1,3 @@
-/*pub enum VertexCollection {
-    Color(Vec<ColorVertex>),
-    Texture(Vec<TextureVertex>),
-    Model(Vec<ModelVertex>)
-}
-impl From<Vec<ColorVertex>> for VertexCollection {
-    fn from(value: Vec<ColorVertex>) -> Self {
-        Self::Color(value)
-    }
-}
-impl From<Vec<TextureVertex>> for VertexCollection {
-    fn from(value: Vec<TextureVertex>) -> Self {
-        Self::Texture(value)
-    }
-}
-impl From<Vec<ModelVertex>> for VertexCollection {
-    fn from(value: Vec<ModelVertex>) -> Self {
-        Self::Model(value)
-    }
-}*/
 #[cfg(feature = "custom_vertex")]
 use std::collections::HashMap;
 #[cfg(feature = "custom_vertex")]

@@ -1,0 +1,34 @@
+# Aspose.3D Wavefront OBJ Exporter
+# Copyright 2004-2024 Aspose Pty Ltd.
+# File created: 10/29/2024 05:11:18
+
+newmtl Skull_Jaw
+	Ka 0.05087609 0.05087609 0.05087609
+	Kd 0.5 0.5 0.5
+	Ke 0 0 0
+	illum 2
+	Ks 0.5 0.5 0.5
+	Ns 25
+	d 1
+	Tr 0
+	map_Kd D:\Documents\3D Modeling\Skull\SubPainter\Textures\Skull_Jaw_BaseColor.png
+newmtl Teeth
+	Ka 0.05087609 0.05087609 0.05087609
+	Kd 0.5 0.5 0.5
+	Ke 0 0 0
+	illum 2
+	Ks 0.5 0.5 0.5
+	Ns 49
+	d 1
+	Tr 0
+	map_Kd D:\Documents\3D Modeling\Skull\SubPainter\Textures\Teeth_BaseColor.png
+newmtl Skull_Top
+	Ka 0.05087609 0.05087609 0.05087609
+	Kd 0.5 0.5 0.5
+	Ke 0 0 0
+	illum 2
+	Ks 0.5 0.5 0.5
+	Ns 25
+	d 1
+	Tr 0
+	map_Kd D:\Documents\3D Modeling\Skull\SubPainter\Textures\Skull_Top_BaseColor.png

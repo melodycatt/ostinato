@@ -1,13 +1,15 @@
 
 use std::{any::Any, collections::HashMap, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use serde_yaml::Value;
 use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState};
 
+// ???
 extern crate alloc;
 
-use crate::{mesh::{self, Material}, Renderer, texture};
+use crate::{Renderer, mesh::{self, Material}, texture::{self, Texture}};
 
+// TODO remove wasm
 #[cfg(target_arch = "wasm32")]
 fn format_url(file_name: &str) -> reqwest::Url {
     let window = web_sys::window().unwrap();
@@ -20,6 +22,7 @@ fn format_url(file_name: &str) -> reqwest::Url {
     base.join(file_name).unwrap()
 }
 
+/// load to string with `file_name` appended to res path
 pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
     #[cfg(target_arch = "wasm32")]
     let txt = {
@@ -36,7 +39,7 @@ pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
 
     Ok(txt)
 }
-
+/// load to binary with `file_name` appended to res path
 pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
     #[cfg(target_arch = "wasm32")]
     let data = {
@@ -54,16 +57,36 @@ pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
     Ok(data)
 }
 
-
-pub async fn load_texture(
+/// load texture from res/
+pub async fn load_texture<'a>(
     file_name: &str,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> anyhow::Result<texture::Texture> {
-    let data = load_binary(file_name).await?;
-    texture::Texture::from_bytes(device, queue, &data, file_name)
+    renderer: &'a mut Renderer,
+    resource_name: Option<&str>,
+) -> anyhow::Result<&'a mut Box<dyn Resource>> {
+    let resource_name = match resource_name {
+        Some(name) => name,
+        None => file_name
+    };
+    let id = renderer.shader_resources.index_of(resource_name);
+    let entry = renderer.shader_resources.entry(id);
+
+    if entry.exists() {
+        return Ok(entry.get_mut().unwrap())
+    }
+
+    let tex = entry.or_insert_with(|| {
+        // synchronous closure — do not block here in production
+        // convert the async load into a blocking call for this closure or
+        // call a two-step approach: check presence, if missing do async load then insert.
+        // For example code only:
+        let data = pollster::block_on(load_binary(file_name)).unwrap();
+        Box::new(texture::Texture::from_bytes(&renderer.device, &renderer.queue, &data, file_name).unwrap())
+    });
+
+    Ok(tex)
 }
 
+/// i hope this isnt public
 macro_rules! parse_yaml {
     ($val:expr, $as:ident, $name:expr) => {
         $val
@@ -78,9 +101,17 @@ macro_rules! unwrap_yaml {
     };
 }
 
+/// load a material from an .omi file
+/// 
 /// if `resource_name` is omitted `file_name` is used to store the shader in the renderer;
 /// you should specify a resource name if you load the same shader twice with different options
-pub async fn load_shader(
+/// 
+/// `primitive_state` is for advanced render pipeline config such as: 
+/// - face culling
+/// - polygon mode (e.g. wireframe)
+/// - index format
+/// see wgpu::PrimitiveState
+pub async fn load_material(
     file_name: &str,
     renderer: &mut Renderer,
     resource_name: Option<&str>,
@@ -98,18 +129,19 @@ pub async fn load_shader(
         }
     };
 
-    let id = renderer.shaders.index_of(resource_name);
-    let existing = renderer.shaders.get(id);
+    let id = renderer.materials.index_of(resource_name);
+    let existing = renderer.materials.get(id);
     if existing.is_err() {
-        let m = load_shader_raw(file_name, renderer, primitive_state).await?;
-        renderer.shaders.insert(resource_name, m);
+        let m = load_omi(file_name, renderer, primitive_state).await.context(anyhow!("on shader: {}", resource_name))?;
+        renderer.materials.insert(resource_name, m);
     }
 
     Ok(id)
 }
 
-
-pub async fn load_shader_raw(
+/// such a pain to write AND badly done. the ultimate combination
+/// idk why this is public but use it at your own discretion!
+pub async fn load_omi(
     file_name: &str,
     renderer: &mut Renderer,
     primitive_state: PrimitiveState
@@ -135,6 +167,7 @@ pub async fn load_shader_raw(
     let mut bind_group_layouts = Vec::with_capacity(bind_groups_yaml.len());
     let mut bind_groups = Vec::with_capacity(bind_groups_yaml.len());
 
+    
     for i in 0..bind_groups_yaml.len() {
         let group = &bind_groups_yaml[i];
         let label = parse_yaml!(group.get("label"), as_str, "label");
@@ -178,6 +211,7 @@ pub async fn load_shader_raw(
                     }
                 },
                 "SAMPLER" => {
+                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), renderer, None).await;
                     BindingType::Sampler(match parse_yaml!(entry.get("sampler"), as_str, "sampler") {
                         "FILTERING" => wgpu::SamplerBindingType::Filtering,
                         "COMPARISON" => wgpu::SamplerBindingType::Comparison,
@@ -186,6 +220,7 @@ pub async fn load_shader_raw(
                     })
                 },
                 "TEXTURE" => {
+                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), renderer, None).await;
                     let tex = unwrap_yaml!(entry.get("texture"), "texture");
                     BindingType::Texture { 
                         sample_type: match parse_yaml!(tex.get("sampler_type"), as_str, "sampler_type") {
@@ -345,31 +380,56 @@ pub async fn load_shader_raw(
                 ty: group_type,
                 count
             });
-            buffer_labels.push(parse_yaml!(entry.get("resource"), as_str, "resource"))
+            buffer_labels.push(parse_yaml!(entry.get("resource"), as_str, "resource"))            
         }
+
         let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some(label),
             entries: &entries
         });
 
-
         let indices: Vec<usize> = buffer_labels
             .into_iter()
-            .map(|x| renderer.shader_resources.index_of(x))
+            .map(|x| {
+                renderer.shader_resources.index_of(x)
+            })
             .collect();
 
-        let binding: Vec<&Box<dyn Resource>> = indices
+        let shader_resources: Vec<&Box<dyn Resource>> = indices
             .iter()
-            .map(|&idx| renderer.shader_resources.get(idx))
+            .map(|&idx| {
+                renderer.shader_resources.get(idx)
+            })
             .collect::<anyhow::Result<_>>()?;
 
-        let resources: Vec<_> = binding
+        let resources: Vec<_> = shader_resources
             .iter()
             .enumerate()
             .map(|(i, x)| {
-                Ok::<_, anyhow::Error>(BindGroupEntry {
+                let resource = match entries[i] {
+                    BindGroupLayoutEntry {
+                        ty: BindingType::Sampler(_),
+                        ..
+                    } => {
+                        let any = x.as_ref() as &dyn Any;
+                        let dc = any.downcast_ref::<Texture>()
+                            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"))?;
+                        dc.sampler.binding()?
+                    },
+                    BindGroupLayoutEntry {
+                        ty: BindingType::Texture { .. },
+                        ..
+                    } => {
+                        let any = x.as_ref() as &dyn Any;
+                        let dc = any.downcast_ref::<Texture>()
+                            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"))?;
+                        dc.view.binding()?
+                    },
+                    _ => { x.binding()? }
+                };
+                Ok::<BindGroupEntry, anyhow::Error>(BindGroupEntry {
                     binding: i as u32,
-                    resource: x.binding()?,
+                    resource,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -503,15 +563,16 @@ pub async fn load_shader_raw(
 
     return Ok(material)
 }
-
+/*
 /// this trait is blanket implemented to return an error
 /// if you really really need a custom type to implement `binding`
 /// (which in most cases the default types will be enough)
 /// use #![feature(min_specialization)] on nightly to override the blanket impl
+*/
+/// trait to be used in a `ResourceCollection`
+/// you almost certainly wont need to implement this yourself
+/// partly a relic of old code in functionality and documentation so especially dont bother with this
 pub trait Resource: Any+Debug {
-    /*fn as_any(&self) -> &dyn std::any::Any;
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;*/
     /// may not actually be implemented
     /// used when loading a shader, we need to assume the resource can create a binding
     /// however, we dont know the type, so we dont know how, which is why a trait is needed
@@ -523,12 +584,6 @@ pub trait Resource: Any+Debug {
 }
 
 impl Resource for wgpu::Buffer {
-    // default fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-    //     self
-    // }
-    // fn as_any(&self) -> &dyn std::any::Any {
-    //     self
-    // }
     fn binding<'a>(&'a self) -> anyhow::Result<BindingResource<'a>> {
         Ok(self.as_entire_binding())
     }
@@ -537,11 +592,12 @@ impl Resource for std::time::Instant {}
 impl Resource for Arc<winit::window::Window> {}
 impl Resource for wgpu::BindGroup {}
 impl Resource for Arc<wgpu::BindGroup> {}
-impl Resource for String {}
 
+/// loads an .obj model using the .omtl of the same name for materials
+// TODO this removes the customizability of load_shader so. fix that
+/// 
 /// .omi (ostinato material info) is info on how to construct a material from
 /// .omtl (ostinto mtl) is a bundle of material infos
-
 pub async fn load_model(
     file_name: &str,
     //device: &wgpu::Device,
@@ -562,7 +618,7 @@ pub async fn load_model(
     let omis: Vec<&str> = omi_names.iter().map(|x| x.as_str().unwrap()).collect();
     let mut mids = Vec::with_capacity(omis.len());
     for i in omis {
-        mids.push(load_shader(i, renderer, None, None).await?);
+        mids.push(load_material(i, renderer, None, None).await?);
     }
 
     let (models, _) = tobj::load_obj_buf_async(
@@ -576,30 +632,6 @@ pub async fn load_model(
     )
     .await?;
 
-    //let mut materials = Vec::new();
-    /*for m in obj_materials? {
-        let diffuse_texture = load_texture(&m.diffuse_texture, device, queue).await?;
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: None,
-        });
-
-        materials.push(mesh::Material {
-            name: m.name,
-            diffuse_texture,
-            bind_group,
-        })
-    }*/
     let d = omi_index.iter().find_map(|x| { if let Some(default) = x.get("default") { default.as_u64() } else { None } }).expect("x_x :: invalid OMI yaml! missing or invalid default material index");
 
     let meshes = models
@@ -679,12 +711,6 @@ pub async fn load_model(
     Ok(mesh::Model { meshes })
 }
 
-
-
-
-
-
-
 struct Interner {
     map: HashMap<String, usize>,
     id: usize,
@@ -718,6 +744,12 @@ impl Interner {
     }
 }
 
+// TODO make a wrapper for the usize so that we can implement &str::into::<index>()
+/// a kind of vec used to make stuff faster than a hashmap
+/// i wanted to be able to register resources like `Material`s and `BindingResource`s with string ids
+/// without the overhead of a hashmap
+/// so this interns strings as indices for you to store and then index into `resources` later on
+/// this might be a stupid implementation but whatever
 pub struct ResourceCollection<T: 'static> {
     interner: Interner,
     pub resources: Vec<T>
@@ -732,33 +764,48 @@ impl<T: 'static> ResourceCollection<T> {
 
     pub fn insert(&mut self, key: &str, value: T) -> usize {
         let id = self.interner.intern(key);
+
         if id == self.resources.len() {
-            self.resources.reserve(1);
-        }
-        self.resources.insert(id, value);
+            // Perfect case: next sequential ID → push is fastest possible
+            self.resources.push(value);
+        } else if id < self.resources.len() {
+            // Replace existing
+            self.resources[id] = value;
+        } else { unreachable!() }
+
         id
     }
+    
     pub fn index_of(&mut self, key: &str) -> usize {
         return self.interner.intern(key);
     }
-    pub fn remove(&mut self, key: &str) -> anyhow::Result<()> {
-        self.interner.remove(key)?;
-        Ok(())
+
+    /// this function does not actually erase the value from memory, it just marks the index as empty to be overwritten
+    /// you can still access the value behind `key` via its index (but not the string key), but it may be changed at any time
+    /// which is why this function is unsafe
+    pub unsafe fn remove(&mut self, key: &str) -> anyhow::Result<()> {
+        self.interner.remove(key)
     }
 
     pub fn get(&self, index: usize) -> anyhow::Result<&T> {
         if self.resources.len() <= index {
-            return Err(anyhow!("Tried to get resource collection item greater that collection len"))
+            return Err(anyhow!("x_x :: tried to get resource collection item greater that collection len!"))
         }
         Ok(&self.resources[index])
     }
     pub fn get_mut(&mut self, index: usize) -> anyhow::Result<&mut T> {
+                if self.resources.len() <= index {
+            return Err(anyhow!("x_x :: tried to get_mut resource collection item greater that collection len!"))
+        }
         Ok(&mut self.resources[index])
+    }
+    pub fn entry(&mut self, index: usize) -> ResourceEntry<'_, T> {
+        ResourceEntry { id: index, collection: self }
     }
 }
 
 impl ResourceCollection<Box<dyn Resource>> {
-    pub fn downcast<U: 'static>(&self, index: usize) -> anyhow::Result<&U> where {
+    pub fn downcast_ref<U: 'static>(&self, index: usize) -> anyhow::Result<&U> where {
         let resource = self.get(index).unwrap();
         let any = resource.as_ref() as &dyn Any;
         let dc = any.downcast_ref::<U>()
@@ -771,5 +818,48 @@ impl ResourceCollection<Box<dyn Resource>> {
         let dc = any.downcast_mut::<U>()
             .ok_or(anyhow!("x_x :: incorrectly downcasted resource"));
         dc
+    }
+}
+
+pub struct ResourceEntry<'a, T: 'static> {
+    id: usize,
+    collection: &'a mut ResourceCollection<T>,
+}
+
+impl<'a, T: 'static> ResourceEntry<'a, T> {
+    pub fn exists(&self) -> bool {
+        self.id < self.collection.resources.len()
+    }
+
+    /// Inserts created value if missing, using the closure.
+    /// If the slot already exists returns &mut existing.
+    pub fn or_insert_with<F: FnOnce() -> T>(self, f: F) -> &'a mut T {
+        let id = self.id;
+        let coll = self.collection;
+
+        if id < coll.resources.len() {
+            // slot exists — return it
+            &mut coll.resources[id]
+        } else if id == coll.resources.len() {
+            // next sequential id — push the created value
+            coll.resources.push(f());
+            &mut coll.resources[id]
+        } else { unreachable!() }
+    }
+
+    /// Get mutable reference if already present — None if absent.
+    pub fn get_mut(self) -> Option<&'a mut T> {
+        if self.id < self.collection.resources.len() {
+            Some(&mut self.collection.resources[self.id])
+        } else {
+            None
+        }
+    }
+    pub fn get(self) -> Option<&'a T> {
+        if self.id < self.collection.resources.len() {
+            Some(&self.collection.resources[self.id])
+        } else {
+            None
+        }
     }
 }

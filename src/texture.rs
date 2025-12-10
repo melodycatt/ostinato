@@ -1,18 +1,14 @@
 use anyhow::*;
 use image::GenericImageView;
-
 use crate::resources::Resource;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Texture {
-    #[allow(unused)]
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
+    pub sampler: wgpu::Sampler
 }
 
-#[allow(dead_code)]
 impl Texture {
     pub fn from_bytes(
         device: &wgpu::Device,
