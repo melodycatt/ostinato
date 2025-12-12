@@ -171,12 +171,12 @@ pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct SkullUniform {
-    Ka: [f32; 3],
+    ka: [f32; 3],
     _pad1: f32,
-    Kd: [f32; 3],
+    kd: [f32; 3],
     _pad2: f32,
-    Ks: [f32; 3],
-    Ns: f32
+    ks: [f32; 3],
+    ns: f32
 }
 
 
@@ -226,26 +226,26 @@ impl AppHandler for ExampleHandler {
         let skull_jaw_props = SkullUniform {
             _pad1:0.,
             _pad2:0.,
-            Ka: [0.05087609, 0.05087609, 0.05087609],
-            Kd: [0.5,0.5,0.5],
-            Ks: [0.5,0.5,0.5],
-            Ns: 25.
+            ka: [0.05087609, 0.05087609, 0.05087609],
+            kd: [0.5,0.5,0.5],
+            ks: [0.5,0.5,0.5],
+            ns: 25.
         };
         let teeth_props = SkullUniform {
-            Ka: [0.05087609, 0.05087609, 0.05087609],
-            Kd: [0.5,0.5,0.5],
+            ka: [0.05087609, 0.05087609, 0.05087609],
+            kd: [0.5,0.5,0.5],
             _pad1:0.,
             _pad2:0.,
-            Ks: [0.5,0.5,0.5],
-            Ns: 49.
+            ks: [0.5,0.5,0.5],
+            ns: 49.
         };
         let skull_top_props = SkullUniform {
             _pad1:0.,
             _pad2:0.,
-            Ka: [0.05087609, 0.05087609, 0.05087609],
-            Kd: [0.5,0.5,0.5],
-            Ks: [0.5,0.5,0.5],
-            Ns: 25.
+            ka: [0.05087609, 0.05087609, 0.05087609],
+            kd: [0.5,0.5,0.5],
+            ks: [0.5,0.5,0.5],
+            ns: 25.
         };
         let jaw_buffer = context.renderer.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
