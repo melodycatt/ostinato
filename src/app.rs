@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 use winit::{application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::{DeviceEvent, DeviceId, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, window::Window};
-use crate::{AppHandler, Context, HEIGHT, WIDTH, mesh::Model};
+use crate::{AppHandler, Context, HEIGHT, WIDTH, mesh::Model, particle::{EmitterConfig, ParticleEmitter}};
 
 // TODO remove wasm its annoying and uselesss since we use line polygon mode feature anyway
 
@@ -182,8 +183,9 @@ struct SkullUniform {
 /// example handler. not for outside use.
 /// full namespace paths so it doesnt clutter this file
 struct ExampleHandler {
-    cube: Option<crate::mesh::Mesh>,
-    cube2: Option<crate::mesh::Mesh>,
+    // cube: Option<crate::mesh::Mesh>,
+    // cube2: Option<crate::mesh::Mesh>,
+    emitter: Option<crate::particle::ParticleEmitter>,
     camera: Option<crate::camera::Camera>,
     camera_controller: crate::camera::CameraController,
     skull: Option<Model>
@@ -192,8 +194,9 @@ struct ExampleHandler {
 impl AppHandler for ExampleHandler {
     fn new() -> Self {
         Self {
-            cube: None,
-            cube2: None,
+            // cube: None,
+            // cube2: None,
+            emitter: None,
             camera: None,
             skull: None,
             camera_controller: crate::camera::CameraController::new(0.15)
@@ -208,6 +211,7 @@ impl AppHandler for ExampleHandler {
             zfar: 1000.0,
         }, context.renderer.config.width as f32 / context.renderer.config.height as f32, &context.renderer.device);
 
+        
         // TODO currently this MUST be done in init somewhere to not throw an error if camera shaders are loaded in init
         // soooooo fix that ig
         // or actually maybe you dont need to
@@ -217,7 +221,7 @@ impl AppHandler for ExampleHandler {
         // self.cube = Some(crate::mesh::new_cube([0.,0.,0.], [1.,1.,1.], "static_fill", &mut context.renderer));
         // let _ = anyhow::Context::with_context(crate::resources::load_shader("bathroom/blue", &mut context.renderer, Some("static_wire"), Some(wgpu::PrimitiveState { polygon_mode: wgpu::PolygonMode::Line, ..Default::default() })).await, || "error when loading shader")?;
         // self.cube2 = Some(crate::mesh::new_cube([-0.05,-0.05,-0.05], [1.1,1.1,1.1], "static_wire", &mut context.renderer));
-
+        
         // TODO this is so much code for so little and so muchg repetition
         let skull_jaw_props = SkullUniform {
             _pad1:0.,
@@ -267,20 +271,33 @@ impl AppHandler for ExampleHandler {
             }
         );
         context.renderer.shader_resources.insert("Teeth_Properties", Box::new(teeth_buffer));
-
+        
         self.skull = Some(crate::resources::load_model("skull/human_skull", &mut context.renderer).await?);
         dbg!(self.skull.as_ref().unwrap().meshes.len());
-
+        
+        self.emitter = Some(ParticleEmitter::new(context, self.skull.as_mut().unwrap().meshes[0].clone(), EmitterConfig {
+            angular_velocities: crate::particle::RandomRange::Uniform(0., 10.0),
+            velocity_angle_range: crate::particle::RandomRange::Uniform(-1., -1.),
+            velocity_center_angle: glam::Quat::from_rotation_arc(Vec3::Z, Vec3::new(0., 1., 0.)),
+            velocity_magnitudes: crate::particle::RandomRange::Uniform(1.0, 5.0),
+            rotations: crate::particle::RandomRange::Constant(0.0),
+            speed: crate::particle::RandomRange::Uniform(0.5, 1.0),
+            scales: crate::particle::RandomRange::Uniform(0.05, 0.1),
+            gravity_magnitudes: crate::particle::RandomRange::Constant(9.8),
+            gravity_direction: Vec3::NEG_Y,
+            air_resistance: 0.01
+        }, Vec3::ZERO));
         Ok(())
     }
     fn render(&mut self, context: &mut Context, pass: &mut wgpu::RenderPass<'_>) -> anyhow::Result<(), wgpu::SurfaceError> {
         // TODO this looks like boilerplate!!!!!! stupid!!!!!!!! lets change that
         // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube.as_ref().unwrap()).expect("AAA");
         // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube2.as_ref().unwrap()).expect("AAA");
-        context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[0]).expect("AAA");
-        context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[1]).expect("AAA");
-        context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[2]).expect("AAA");
-        context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[3]).expect("AAA");
+        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[0]).expect("AAA");
+        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[1]).expect("AAA");
+        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[2]).expect("AAA");
+        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[3]).expect("AAA");
+        self.emitter.as_mut().unwrap().render( &mut self.camera.as_mut().unwrap(), &mut context.renderer, pass).expect("aaa");
         Ok(())
     }
     fn update(&mut self, context: &mut Context) -> anyhow::Result<()> {
@@ -290,6 +307,7 @@ impl AppHandler for ExampleHandler {
         // maybe bundle these two lines into a Camera method that takes `&mut self, renderer: &mut Renderer`
         camera.uniform.update_view_proj(camera.config());
         context.renderer.queue.write_buffer(&camera.buffer, 0, bytemuck::cast_slice(&[camera.uniform]));
+        self.emitter.as_mut().unwrap().update(context)?;
         Ok(())
     }
 }

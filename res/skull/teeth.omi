@@ -37,3 +37,4 @@ bind_groups:
         resource: Teeth_Properties
 buffers:
   - MODEL_VERTEX
+  - INSTANCE

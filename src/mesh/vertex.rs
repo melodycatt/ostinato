@@ -6,6 +6,8 @@ use std::sync::Mutex;
 #[cfg(not(feature = "custom_vertex"))]
 use anyhow::anyhow;
 
+use crate::renderer::InstanceRaw;
+
 #[cfg(feature = "custom_vertex")]
 type DescFn = fn() -> wgpu::VertexBufferLayout<'static>;
 
@@ -24,6 +26,7 @@ pub fn desc_from_name(name: &str) -> anyhow::Result<wgpu::VertexBufferLayout<'st
         "COLOR_VERTEX" => Ok(ColorVertex::desc()),
         "TEXTURE_VERTEX" => Ok(TextureVertex::desc()),
         "MODEL_VERTEX" => Ok(ModelVertex::desc()),
+        "INSTANCE" => Ok(InstanceRaw::desc()),
         _ => {
             #[cfg(feature = "custom_vertex")]
             return Ok(REGISTRY.lock().map_err(|_| anyhow::anyhow!("x_x :: tried to access poisoned or locked vertex registry when loading material (this will only be your fault, ostinato never uses the vertex registry)"))?

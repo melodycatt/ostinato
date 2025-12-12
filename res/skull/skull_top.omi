@@ -37,3 +37,4 @@ bind_groups:
         resource: Skull_Top_Properties
 buffers:
   - MODEL_VERTEX
+  - INSTANCE
