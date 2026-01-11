@@ -162,3 +162,22 @@ pub trait AppHandler: Sized {
     // called when the app is started, since you dont have `context` properly initialised until then
     //fn init(&mut self, context: &mut Context) -> impl std::future::Future<Output = anyhow::Result<()>>;
 } 
+
+
+
+
+pub mod prelude {
+    pub use glam;
+    pub use wgpu;
+    pub use crate::{
+        renderer::Renderer,
+        Context,
+        AppHandler,
+        camera,
+        resources::{
+            Mesh,
+            load_material,
+            load_model
+        }
+    };
+}

@@ -67,7 +67,8 @@ impl Renderer {
                         wgpu::Limits::default()
                     },
                     memory_hints: Default::default(),
-                    trace: wgpu::Trace::Off, // Trace path
+                    trace: wgpu::Trace::Off, // Trace path.
+                    experimental_features: wgpu::ExperimentalFeatures::disabled()
                 },
             )
             .await
@@ -163,6 +164,7 @@ impl Renderer {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: 0.1,
@@ -182,6 +184,7 @@ impl Renderer {
                 stencil_ops: None,
             }),
             occlusion_query_set: None,
+            multiview_mask: None,
             timestamp_writes: None,
         });
 

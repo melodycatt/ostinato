@@ -471,7 +471,7 @@ pub async fn load_omi(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(file_name),
         bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
     
     let entry_points = unwrap_yaml!(root.get("entry_points"), "entry_points");
@@ -523,7 +523,7 @@ pub async fn load_omi(
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None
         })
     } else {
@@ -560,7 +560,7 @@ pub async fn load_omi(
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None
         })
     };
