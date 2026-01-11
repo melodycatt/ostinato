@@ -1,4 +1,4 @@
-use crate::mesh::Mesh;
+use super::Mesh;
 // todo ?
 // model.rs
 pub struct Model {

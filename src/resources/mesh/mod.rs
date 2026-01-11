@@ -1,10 +1,8 @@
 
 mod vertex;
 mod model;
-mod material;
 pub use vertex::*;
 pub use model::*;
-pub use material::*;
 
 use std::fmt::Debug;
 use std::ops::Range;

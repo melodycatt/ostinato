@@ -1,7 +1,7 @@
 use derive_resource::Resource;
 use wgpu::{BindGroup, ColorTargetState, Device, PipelineLayout, RenderPipeline, ShaderModule, TextureFormat, VertexBufferLayout};
 
-use crate::{resources::Resource, texture};
+use crate::resources::{Resource, texture};
 
 // TODO rename shader to material everywhere
 /// rendering material

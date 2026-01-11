@@ -2,7 +2,7 @@ use rand::distr::Distribution;
 
 use wgpu::{Buffer, BufferDescriptor, BufferUsages, util::{BufferInitDescriptor, DeviceExt}};
 
-use crate::{Context, camera::Camera, mesh::Mesh, renderer::{Instance, Renderer}};
+use crate::{Context, camera::Camera, resources::Mesh, renderer::{Instance, Renderer}};
 
 pub struct ParticleEmitter {
     pub mesh: Mesh,

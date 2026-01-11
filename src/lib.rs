@@ -1,5 +1,3 @@
-pub mod texture;
-pub mod mesh;
 pub mod camera;
 pub mod input;
 pub mod resources;
@@ -7,6 +5,10 @@ pub mod renderer;
 pub mod particle;
 mod app;
 pub use app::*;
+pub use wgpu;
+pub use glam;
+// TODO remove this
+pub use bytemuck;
 use wgpu::RenderPass;
 
 use std::{iter, sync::Arc, time::Instant};
@@ -32,6 +34,7 @@ pub struct Context {
     /// will often be pre-set seeing as i know the order of my own default resources
     /// sorry, its magic numbers - i lowkey think theyre fun sometimes
     resource_indices: [usize; 1],
+    pub(crate)resources_path: Option<String>,
 
     delta_instant: Instant,
     /// time between frames, in seconds
@@ -55,10 +58,15 @@ impl Context {
             start: Instant::now(),
             delta_instant: Instant::now(),
             delta: 0.,
+            resources_path: None,
 
             mouse: MouseData::new(),
             keyboard: KeyboardData::new()
         })
+    }
+
+    pub fn set_resource_directory(&mut self, path: String) {
+        self.resources_path = Some(path);
     }
 
     async fn init(&mut self) -> anyhow::Result<()> {
@@ -141,8 +149,9 @@ impl Context {
 }
 
 
-pub trait AppHandler {
-    fn new() -> Self;
+pub trait AppHandler: Sized {
+    #[allow(async_fn_in_trait)]
+    async fn new(context: &mut Context) -> anyhow::Result<Self>;
 
     /// called once every frame. you are given one `RenderPass`
     /// if you want another, contribute to the library and make `Context` a trait so you can make custom event loops
@@ -150,6 +159,6 @@ pub trait AppHandler {
     fn render(&mut self, context: &mut Context, pass: &mut RenderPass<'_>) -> anyhow::Result<(), wgpu::SurfaceError>;
     /// called once before `render`
     fn update(&mut self, context: &mut Context) -> anyhow::Result<()>;
-    /// called when the app is started, since you dont have `context` properly initialised until then
-    fn init(&mut self, context: &mut Context) -> impl std::future::Future<Output = anyhow::Result<()>>;
+    // called when the app is started, since you dont have `context` properly initialised until then
+    //fn init(&mut self, context: &mut Context) -> impl std::future::Future<Output = anyhow::Result<()>>;
 } 

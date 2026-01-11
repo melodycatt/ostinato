@@ -1,13 +1,17 @@
-
 use std::{any::Any, collections::HashMap, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 use anyhow::{Context, anyhow};
 use serde_yaml::Value;
 use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState};
 
 // ???
-extern crate alloc;
 
-use crate::{Renderer, mesh::{self, Material}, texture::{self, Texture}};
+mod texture;
+mod mesh;
+mod material;
+
+pub use material::*;
+pub use texture::*;
+pub use mesh::*;
 
 // TODO remove wasm
 #[cfg(target_arch = "wasm32")]
@@ -23,7 +27,8 @@ fn format_url(file_name: &str) -> reqwest::Url {
 }
 
 /// load to string with `file_name` appended to res path
-pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
+pub async fn load_string(file_name: &str, path: &Option<String>) -> anyhow::Result<String> {
+
     #[cfg(target_arch = "wasm32")]
     let txt = {
         let url = format_url(file_name);
@@ -31,8 +36,11 @@ pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let txt = {
-        let path = std::path::Path::new(env!("OUT_DIR"))
-            .join("res")
+        let res = match path {
+            Some(s) => s,
+            None => return Err(anyhow!("x_x :: tried to load string when the res path has not been set!"))
+        };
+        let path = std::path::Path::new(&res)
             .join(file_name);
         std::fs::read_to_string(path)?
     };
@@ -40,7 +48,7 @@ pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
     Ok(txt)
 }
 /// load to binary with `file_name` appended to res path
-pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
+pub async fn load_binary(file_name: &str, path: &Option<String>) -> anyhow::Result<Vec<u8>> {
     #[cfg(target_arch = "wasm32")]
     let data = {
         let url = format_url(file_name);
@@ -48,8 +56,11 @@ pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let data = {
-        let path = std::path::Path::new(env!("OUT_DIR"))
-            .join("res")
+        let res = match path {
+            Some(s) => s,
+            None => return Err(anyhow!("x_x :: tried to load string when the res path has not been set!"))
+        };
+        let path = std::path::Path::new(&res)
             .join(file_name);
         std::fs::read(path)?
     };
@@ -60,15 +71,15 @@ pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
 /// load texture from res/
 pub async fn load_texture<'a>(
     file_name: &str,
-    renderer: &'a mut Renderer,
+    context: &'a mut crate::Context,
     resource_name: Option<&str>,
 ) -> anyhow::Result<&'a mut Box<dyn Resource>> {
     let resource_name = match resource_name {
         Some(name) => name,
         None => file_name
     };
-    let id = renderer.shader_resources.index_of(resource_name);
-    let entry = renderer.shader_resources.entry(id);
+    let id = context.renderer.shader_resources.index_of(resource_name);
+    let entry = context.renderer.shader_resources.entry(id);
 
     if entry.exists() {
         return Ok(entry.get_mut().unwrap())
@@ -79,8 +90,8 @@ pub async fn load_texture<'a>(
         // convert the async load into a blocking call for this closure or
         // call a two-step approach: check presence, if missing do async load then insert.
         // For example code only:
-        let data = pollster::block_on(load_binary(file_name)).unwrap();
-        Box::new(texture::Texture::from_bytes(&renderer.device, &renderer.queue, &data, file_name).unwrap())
+        let data = pollster::block_on(load_binary(file_name, &context.resources_path)).unwrap();
+        Box::new(texture::Texture::from_bytes(&context.renderer.device, &context.renderer.queue, &data, file_name).unwrap())
     });
 
     Ok(tex)
@@ -103,7 +114,7 @@ macro_rules! unwrap_yaml {
 
 /// load a material from an .omi file
 /// 
-/// if `resource_name` is omitted `file_name` is used to store the shader in the renderer;
+/// if `resource_name` is omitted `file_name` is used to store the shader in the context.renderer;
 /// you should specify a resource name if you load the same shader twice with different options
 /// 
 /// `primitive_state` is for advanced render pipeline config such as: 
@@ -113,7 +124,7 @@ macro_rules! unwrap_yaml {
 /// see wgpu::PrimitiveState
 pub async fn load_material(
     file_name: &str,
-    renderer: &mut Renderer,
+    context: &mut crate::Context,
     resource_name: Option<&str>,
     primitive_state: Option<PrimitiveState>
 ) -> anyhow::Result<usize> {
@@ -129,11 +140,11 @@ pub async fn load_material(
         }
     };
 
-    let id = renderer.materials.index_of(resource_name);
-    let existing = renderer.materials.get(id);
+    let id = context.renderer.materials.index_of(resource_name);
+    let existing = context.renderer.materials.get(id);
     if existing.is_err() {
-        let m = load_omi(file_name, renderer, primitive_state).await.context(anyhow!("on shader: {}", resource_name))?;
-        renderer.materials.insert(resource_name, m);
+        let m = load_omi(file_name, context, primitive_state).await.context(anyhow!("on shader: {}", resource_name))?;
+        context.renderer.materials.insert(resource_name, m);
     }
 
     Ok(id)
@@ -143,11 +154,11 @@ pub async fn load_material(
 /// idk why this is public but use it at your own discretion!
 pub async fn load_omi(
     file_name: &str,
-    renderer: &mut Renderer,
+    context: &mut crate::Context,
     primitive_state: PrimitiveState
 ) -> anyhow::Result<Material> {
-    let device = renderer.device.clone();
-    let omi_text = load_string(&format!("{file_name}.omi")).await?;
+    let device = context.renderer.device.clone();
+    let omi_text = load_string(&format!("{file_name}.omi"), &context.resources_path).await?;
     let root: Value = serde_yaml::from_str(&omi_text)?;
 
     let bind_groups_yaml = match root.get("bind_groups") {
@@ -160,7 +171,7 @@ pub async fn load_omi(
         .map(|x| {
             x.as_str()
                 .ok_or(anyhow!("x_x :: invalid shared_bind_groups item!"))
-                .map(|x| renderer.shared_bind_groups.index_of(x))
+                .map(|x| context.renderer.shared_bind_groups.index_of(x))
         })
         .collect::<anyhow::Result<Vec<_>,_>>()?;
 
@@ -211,7 +222,7 @@ pub async fn load_omi(
                     }
                 },
                 "SAMPLER" => {
-                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), renderer, None).await;
+                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), context, None).await;
                     BindingType::Sampler(match parse_yaml!(entry.get("sampler"), as_str, "sampler") {
                         "FILTERING" => wgpu::SamplerBindingType::Filtering,
                         "COMPARISON" => wgpu::SamplerBindingType::Comparison,
@@ -220,7 +231,7 @@ pub async fn load_omi(
                     })
                 },
                 "TEXTURE" => {
-                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), renderer, None).await;
+                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), context, None).await;
                     let tex = unwrap_yaml!(entry.get("texture"), "texture");
                     BindingType::Texture { 
                         sample_type: match parse_yaml!(tex.get("sampler_type"), as_str, "sampler_type") {
@@ -391,14 +402,14 @@ pub async fn load_omi(
         let indices: Vec<usize> = buffer_labels
             .into_iter()
             .map(|x| {
-                renderer.shader_resources.index_of(x)
+                context.renderer.shader_resources.index_of(x)
             })
             .collect();
 
         let shader_resources: Vec<&Box<dyn Resource>> = indices
             .iter()
             .map(|&idx| {
-                renderer.shader_resources.get(idx)
+                context.renderer.shader_resources.get(idx)
             })
             .collect::<anyhow::Result<_>>()?;
 
@@ -451,7 +462,7 @@ pub async fn load_omi(
     }
 
     let binding: Vec<_> = globals.iter()
-        .map(|index| renderer.shared_bind_groups.get(*index).map(|arc| arc.1.clone()))
+        .map(|index| context.renderer.shared_bind_groups.get(*index).map(|arc| arc.1.clone()))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let layouts: Vec<_> = binding
         .iter()
@@ -475,8 +486,8 @@ pub async fn load_omi(
         parse_yaml!(frag.get("function"), as_str, "fragment.function"),
     );
 
-    let vert_text = load_string(&vert_name).await?;//.expect("shader non existent in loading material");
-    let frag_text = load_string(&frag_name).await?;//.expect("shader non existent in loading material");
+    let vert_text = load_string(&vert_name, &context.resources_path).await?;//.expect("shader non existent in loading material");
+    let frag_text = load_string(&frag_name, &context.resources_path).await?;//.expect("shader non existent in loading material");
 
     let vert_descriptor = wgpu::ShaderModuleDescriptor {
         label: Some(vert_name),
@@ -497,7 +508,7 @@ pub async fn load_omi(
                 module: &vert_shader,
                 entry_point: Some(frag_fn),
                 compilation_options: Default::default(),
-                targets: &[Some(mesh::Material::screen_target(renderer.config.format))]
+                targets: &[Some(Material::screen_target(context.renderer.config.format))]
             }),
             primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -534,7 +545,7 @@ pub async fn load_omi(
                 module: &frag_shader,
                 entry_point: Some(frag_fn),
                 compilation_options: Default::default(),
-                targets: &[Some(mesh::Material::screen_target(renderer.config.format))]
+                targets: &[Some(Material::screen_target(context.renderer.config.format))]
             }),
             primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -573,6 +584,8 @@ pub async fn load_omi(
 /// you almost certainly wont need to implement this yourself
 /// partly a relic of old code in functionality and documentation so especially dont bother with this
 pub trait Resource: Any+Debug {
+    /// ignore below: this is old code and docs and it confuses me so im just leaving it
+    ///
     /// may not actually be implemented
     /// used when loading a shader, we need to assume the resource can create a binding
     /// however, we dont know the type, so we dont know how, which is why a trait is needed
@@ -588,10 +601,6 @@ impl Resource for wgpu::Buffer {
         Ok(self.as_entire_binding())
     }
 }
-impl Resource for std::time::Instant {}
-impl Resource for Arc<winit::window::Window> {}
-impl Resource for wgpu::BindGroup {}
-impl Resource for Arc<wgpu::BindGroup> {}
 
 /// loads an .obj model using the .omtl of the same name for materials
 // TODO this removes the customizability of load_shader so. fix that
@@ -603,30 +612,30 @@ pub async fn load_model(
     //device: &wgpu::Device,
     //queue: &wgpu::Queue,
     //layout: &wgpu::BindGroupLayout,
-    renderer: &mut Renderer
+    context: &mut crate::Context
 ) -> anyhow::Result<mesh::Model> {
     //let device = state.graphics().device.clone();
     //let queue = &wgpu.queue;
 
-    let obj_text = load_string(&format!("{file_name}.obj")).await?;
+    let obj_text = load_string(&format!("{file_name}.obj"), &context.resources_path).await.with_context(|| "while loading obj")?;
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
-    let omtl_text = load_string(&format!("{file_name}.omtl")).await?;
+    let omtl_text = load_string(&format!("{file_name}.omtl"), &context.resources_path).await.with_context(|| format!("while loading omtl {}.omtl", file_name))?;
     let omtl_yaml: Value = serde_yaml::from_str(&omtl_text)?;
     let omi_names = parse_yaml!(omtl_yaml.get("materials"), as_sequence, "materials");
     let omi_index = parse_yaml!(omtl_yaml.get("objects"), as_sequence, "objects");
     let omis: Vec<&str> = omi_names.iter().map(|x| x.as_str().unwrap()).collect();
     let mut mids = Vec::with_capacity(omis.len());
     for i in omis {
-        mids.push(load_material(i, renderer, None, None).await?);
+        mids.push(load_material(i, context, None, None).await.with_context(|| "while loading omi")?);
     }
-
+    let path = &context.resources_path;
     let (models, _) = tobj::load_obj_buf_async(
         &mut obj_reader,
         &tobj::GPU_LOAD_OPTIONS,
         |p| async move {
             //println!("{p}");
-            let mat_text = load_string(&p).await.unwrap();
+            let mat_text = load_string(&p, path).await.unwrap();
             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
         },
     )
@@ -704,7 +713,7 @@ pub async fn load_model(
 
             let mat = mids[mid as usize];
 
-            mesh::Mesh::new(vertices, m.mesh.indices, mat, renderer)
+            mesh::Mesh::new(vertices, m.mesh.indices, mat, &mut context.renderer)
         })
         .collect::<Vec<_>>();
 

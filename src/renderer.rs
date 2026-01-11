@@ -2,15 +2,15 @@ use std::{sync::Arc, time::Instant};
 use wgpu::{Buffer, CommandEncoder, SurfaceError, SurfaceTexture, util::DeviceExt};
 use winit::window::Window;
 
-use crate::{camera::Camera, mesh::{Material, Mesh}, resources::{Resource, ResourceCollection}, texture::Texture};
+use crate::{camera::Camera, resources::{Resource, ResourceCollection, Material, Mesh, Texture}};
 
 /// the rendering context and everything that handles it
 pub struct Renderer {
     /// basically the window. wgpu stuff
     pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) device: Arc<wgpu::Device>,
-    pub(crate) queue: wgpu::Queue,
-    pub(crate) config: wgpu::SurfaceConfiguration,
+    pub device: Arc<wgpu::Device>,
+    pub queue: wgpu::Queue,
+    pub config: wgpu::SurfaceConfiguration,
     pub(crate) is_surface_configured: bool,
     pub(crate) depth_texture: Texture,
     pub(crate) window: Arc<Window>,
