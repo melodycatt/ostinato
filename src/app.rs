@@ -121,7 +121,7 @@ impl<T: AppHandler+'static> ApplicationHandler<Context> for App<T> {
                     }
                 };
             }
-            _ => { context.window_event(event_loop, window_id, event); }
+            _ => { context.window_event(event_loop, window_id, event).expect("x_x :: AAAA AAAAAAAA WERE ALL GONNA DIE"); }
         }
     }
 
@@ -283,7 +283,7 @@ impl AppHandler for ExampleHandler {
             emitter,
             camera,
             skull,
-            camera_controller: crate::camera::CameraController::new(0.15)
+            camera_controller: crate::camera::CameraController::new(0.15, 1./3.)
         })
     }
     fn render(&mut self, context: &mut Context, pass: &mut wgpu::RenderPass<'_>) -> anyhow::Result<(), wgpu::SurfaceError> {

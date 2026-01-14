@@ -9,3 +9,4 @@ bind_groups:
   - preset: CAMERA
 buffers:
   - MODEL_VERTEX
+immediate_size: 64

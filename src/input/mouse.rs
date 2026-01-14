@@ -1,29 +1,36 @@
 use std::collections::HashSet;
 
 use crate::{Resource, resources::Resource};
-use winit::{event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent}, event_loop::ActiveEventLoop};
+use winit::{dpi::PhysicalPosition, event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent}, event_loop::ActiveEventLoop};
 
 #[derive(Clone, Debug, Resource)]
 pub struct MouseData {
-    // mouse delta over one frame, in pixels
+    /// mouse delta over one frame, in pixels
     pub delta: [f64; 2],
-    // pressed mousebuttons
+    /// pressed mousebuttons
     pressed: HashSet<MouseButton>,
     prev_pressed: HashSet<MouseButton>,
-    // is the cursor inside the window? (initialises to false, and only updates when the cursor first enters or leaves the window)
+    /// is the cursor inside the window? (initialises to false, and only updates when the cursor first enters or leaves the window)
     pub cursor_inside: bool,
-    // scroll delta over one fram, in pixels
-    pub scroll_delta: [f64; 2]
+    /// scroll delta over one frame, in pixels
+    pub scroll_delta: [f64; 2],
+    /// mouse position
+    pub mouse_position: PhysicalPosition<f64>,
+
+    /// if set to false, mouse and scroll deltas take into account OS sensitivity on top of raw mouse motion
+    pub raw_input: bool
 }
 
 impl MouseData {
-    pub fn new() -> Self {
+    pub fn new(raw_input: bool) -> Self {
         Self {
             delta: [0., 0.],
             pressed: HashSet::with_capacity(256),
             prev_pressed: HashSet::with_capacity(256),
             cursor_inside: false,
-            scroll_delta: [0.; 2]
+            scroll_delta: [0.; 2],
+            mouse_position: PhysicalPosition { x: 0., y: 0. },
+            raw_input
         }
     }
 
@@ -59,17 +66,28 @@ impl MouseData {
                 };
             },
             WindowEvent::MouseWheel { device_id: _, delta, phase: _ } => {
-                match delta {
-                    MouseScrollDelta::LineDelta(x, y) => { 
-                        self.scroll_delta[0] += *x as f64 * 20.;
-                        self.scroll_delta[1] += *y as f64 * 20.; 
-                    },
-                    MouseScrollDelta::PixelDelta(pos) => {
-                        self.scroll_delta[0] += pos.x;
-                        self.scroll_delta[1] += pos.y; 
+                if !self.raw_input {
+                    match delta {
+                        MouseScrollDelta::LineDelta(x, y) => { 
+                            self.scroll_delta[0] += *x as f64 * 20.;
+                            self.scroll_delta[1] += *y as f64 * 20.; 
+                        },
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            self.scroll_delta[0] += pos.x;
+                            self.scroll_delta[1] += pos.y; 
+                        }
                     }
                 }
             },
+            WindowEvent::CursorMoved { device_id: _, position } => {
+                if !self.raw_input {
+                    let delta = [position.x - self.mouse_position.x, position.y - self.mouse_position.y];
+                    println!("{delta:?}");
+                    self.delta[0] += delta[0];
+                    self.delta[1] += delta[1];
+                }
+                self.mouse_position = *position
+            }
             _ => {}
         }
     }
@@ -80,13 +98,26 @@ impl MouseData {
             _device_id: DeviceId,
             event: &DeviceEvent,
         ) {
-        match event {
-            DeviceEvent::MouseMotion{ delta } => {
-                self.delta[0] += delta.0;
-                self.delta[1] += delta.1; 
-            },
-            _ => {}
-            //DeviceEvent::MouseWheel { delta }
+        if self.raw_input {
+            match event {
+                DeviceEvent::MouseMotion{ delta } => {
+                    self.delta[0] += delta.0;
+                    self.delta[1] += delta.1; 
+                },
+                DeviceEvent::MouseWheel { delta } => {
+                    match delta {
+                        MouseScrollDelta::LineDelta(x, y) => { 
+                            self.scroll_delta[0] += *x as f64 * 20.;
+                            self.scroll_delta[1] += *y as f64 * 20.; 
+                        },
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            self.scroll_delta[0] += pos.x;
+                            self.scroll_delta[1] += pos.y; 
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }

@@ -29,7 +29,7 @@ use crate::{input::{keyboard::KeyboardData, mouse::MouseData}, renderer::Rendere
 pub struct Context {
     /// handles alll the rendering shit
     pub renderer: Renderer,
-    
+        
     /// stored resource indices for speed
     /// will often be pre-set seeing as i know the order of my own default resources
     /// sorry, its magic numbers - i lowkey think theyre fun sometimes
@@ -60,7 +60,7 @@ impl Context {
             delta: 0.,
             resources_path: None,
 
-            mouse: MouseData::new(),
+            mouse: MouseData::new(true),
             keyboard: KeyboardData::new()
         })
     }
@@ -118,7 +118,7 @@ impl Context {
         event_loop: &ActiveEventLoop,
         window_id: winit::window::WindowId,
         event: WindowEvent,
-    ) {
+    ) -> anyhow::Result<()> {
         self.mouse.window_event(event_loop, window_id, &event);
         self.keyboard.window_event(event_loop, window_id, &event);
 
@@ -132,10 +132,12 @@ impl Context {
                     },
                 ..
             } => {
-                event_loop.exit()
+                self.renderer.window.set_cursor_visible(true);
+                self.renderer.window.set_cursor_grab(winit::window::CursorGrabMode::None)?;
             },
             _ => {}
         }
+        Ok(())
     }
 
     fn device_event(
@@ -170,7 +172,7 @@ pub mod prelude {
     pub use glam;
     pub use wgpu;
     pub use crate::{
-        renderer::Renderer,
+        renderer::{Renderer, Instance},
         Context,
         AppHandler,
         camera,
@@ -179,5 +181,6 @@ pub mod prelude {
             load_material,
             load_model
         }
+
     };
 }

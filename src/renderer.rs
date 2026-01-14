@@ -1,5 +1,5 @@
 use std::{sync::Arc, time::Instant};
-use wgpu::{Buffer, CommandEncoder, SurfaceError, SurfaceTexture, util::DeviceExt};
+use wgpu::{Buffer, CommandEncoder, Features, SurfaceError, SurfaceTexture, util::DeviceExt};
 use winit::window::Window;
 
 use crate::{camera::Camera, resources::{Resource, ResourceCollection, Material, Mesh, Texture}};
@@ -58,14 +58,10 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::POLYGON_MODE_LINE,
+                    required_features: wgpu::Features::POLYGON_MODE_LINE  | Features::IMMEDIATES,
                     // WebGL doesn't support all of wgpu's features, so if
                     // we're building for the web we'll have to disable some.
-                    required_limits: if cfg!(target_arch = "wasm32") {
-                        wgpu::Limits::downlevel_webgl2_defaults()
-                    } else {
-                        wgpu::Limits::default()
-                    },
+                    required_limits: wgpu::Limits { max_immediate_size: adapter.limits().max_immediate_size, ..Default::default() },
                     memory_hints: Default::default(),
                     trace: wgpu::Trace::Off, // Trace path.
                     experimental_features: wgpu::ExperimentalFeatures::disabled()
@@ -191,6 +187,7 @@ impl Renderer {
         Ok((surface_texture, pass))
     }
 
+    // TODO: renderoptions struct
     pub fn render_with_camera(&mut self, pass: &mut wgpu::RenderPass, camera: &mut Camera, mesh: &Mesh)-> anyhow::Result<()> {
         self.shared_bind_groups.insert("CAMERA", (camera.bind_group.clone(), camera.bind_group_layout.clone()));
 
@@ -208,6 +205,43 @@ impl Renderer {
         pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        Ok(())
+    }
+    pub fn render_preset_with_camera(&mut self, pass: &mut wgpu::RenderPass, camera: &mut Camera, mesh: &Mesh)-> anyhow::Result<()> {
+        self.shared_bind_groups.insert("CAMERA", (camera.bind_group.clone(), camera.bind_group_layout.clone()));
+
+        let m: &Material = self.materials.get(mesh.material)?;
+
+        for i in 0..m.shared_bind_groups.len() {
+            let b = self.shared_bind_groups.get(m.shared_bind_groups[i])?.clone();
+            pass.set_bind_group(i as u32, Some(&*b.0), &[]);
+        }
+        for i in 0..m.bind_groups.len() {
+            let b = &m.bind_groups[i];
+            pass.set_bind_group((i + m.shared_bind_groups.len()) as u32, Some(b), &[]);
+        }
+        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        Ok(())
+    }
+    pub fn render_preset_with_camera_instanced(&mut self, pass: &mut wgpu::RenderPass, camera: &mut Camera, mesh: &Mesh, instance_buffer: &Buffer, instances: std::ops::Range<u32>)-> anyhow::Result<()> {
+        self.shared_bind_groups.insert("CAMERA", (camera.bind_group.clone(), camera.bind_group_layout.clone()));
+
+        let m: &Material = self.materials.get(mesh.material)?;
+
+        for i in 0..m.shared_bind_groups.len() {
+            let b = self.shared_bind_groups.get(m.shared_bind_groups[i])?.clone();
+            pass.set_bind_group(i as u32, Some(&*b.0), &[]);
+        }
+        for i in 0..m.bind_groups.len() {
+            let b = &m.bind_groups[i];
+            pass.set_bind_group((i + m.shared_bind_groups.len()) as u32, Some(b), &[]);
+        }
+        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+        pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.indices.len() as u32, 0, instances);
         Ok(())
     }
     pub fn render_with_camera_instanced(&mut self, pass: &mut wgpu::RenderPass, camera: &mut Camera, mesh: &Mesh, instance_buffer: &Buffer, instances: std::ops::Range<u32>)-> anyhow::Result<()> {
@@ -228,6 +262,12 @@ impl Renderer {
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
         pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         pass.draw_indexed(0..mesh.indices.len() as u32, 0, instances);
+        Ok(())
+    }
+
+    pub fn set_pass_pipeline_from_mesh(&mut self, pass: &mut wgpu::RenderPass, mesh: &Mesh) -> anyhow::Result<()> {
+        let m: &Material = self.materials.get(mesh.material)?;
+        pass.set_pipeline(&m.render_pipeline);
         Ok(())
     }
 }

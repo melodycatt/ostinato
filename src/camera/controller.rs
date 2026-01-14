@@ -8,14 +8,16 @@ use crate::{camera::{Camera}, input::{keyboard::KeyboardData, mouse::MouseData}}
 
 #[derive(Debug, Resource)]
 pub struct CameraController {
+    pub sens: f32,
     pub speed: f32,
     pub pitch: f32,
     pub yaw: f32,
 }
 
 impl CameraController {
-    pub fn new(speed: f32) -> Self {
+    pub fn new(speed: f32, sens: f32) -> Self {
         Self {
+            sens: sens * 0.003,
             speed,
             pitch: 0.0,
             yaw: PI
@@ -84,8 +86,8 @@ impl CameraController {
             camera.eye += Vec3 { y: -self.speed, x: 0.0, z: 0.0 };
         }
 
-        self.yaw -= mouse.delta[0] as f32 * 0.003;
-        self.pitch -= mouse.delta[1] as f32 * 0.003;
+        self.yaw -= mouse.delta[0] as f32 * self.sens;
+        self.pitch -= mouse.delta[1] as f32 * self.sens;
         self.pitch = self.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
         self.yaw %= 2.0 * PI;
 

@@ -1,7 +1,7 @@
 use std::{any::Any, collections::HashMap, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 use anyhow::{Context, anyhow};
 use serde_yaml::Value;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState, naga::front::wgsl::parse_str};
 
 // ???
 
@@ -79,22 +79,18 @@ pub async fn load_texture<'a>(
         None => file_name
     };
     let id = context.renderer.shader_resources.index_of(resource_name);
-    let entry = context.renderer.shader_resources.entry(id);
-
-    if entry.exists() {
-        return Ok(entry.get_mut().unwrap())
+    if context.renderer.shader_resources.interner.map.contains_key(resource_name) {
+        return Ok(context.renderer.shader_resources.get_mut(id).unwrap())
     }
 
-    let tex = entry.or_insert_with(|| {
-        // synchronous closure — do not block here in production
-        // convert the async load into a blocking call for this closure or
-        // call a two-step approach: check presence, if missing do async load then insert.
-        // For example code only:
-        let data = pollster::block_on(load_binary(file_name, &context.resources_path)).unwrap();
-        Box::new(texture::Texture::from_bytes(&context.renderer.device, &context.renderer.queue, &data, file_name).unwrap())
-    });
+    let data = pollster::block_on(load_binary(file_name, &context.resources_path)).unwrap();
+    let tex = texture::Texture::from_bytes(&context.renderer.device, &context.renderer.queue, &data, file_name).unwrap();
+    context.renderer.shader_resources.insert(&format!("sampler::{}", resource_name), Box::new(tex.sampler));
+    context.renderer.shader_resources.insert(&format!("texture::{}", resource_name), Box::new(tex.view));
+    
+    context.renderer.shader_resources.insert(resource_name, Box::new(tex));
 
-    Ok(tex)
+    context.renderer.shader_resources.get_mut(id)
 }
 
 /// i hope this isnt public
@@ -468,10 +464,12 @@ pub async fn load_omi(
         .iter()
         .chain(bind_group_layouts.iter())
         .map(|arc| arc.as_ref()).collect();
+    let immediate_size = parse_yaml!(root.get("immediate_size"), as_u64, "immediate_size");
+    dbg!(immediate_size);
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(file_name),
         bind_group_layouts: &layouts,
-        immediate_size: 0,
+        immediate_size: immediate_size as u32,
     });
     
     let entry_points = unwrap_yaml!(root.get("entry_points"), "entry_points");
@@ -564,10 +562,6 @@ pub async fn load_omi(
             cache: None
         })
     };
-    // include_wgsl!()
-
-    //println!("{:?}", pipeline_layout);
-    //println!("{:?}", layouts);
 
 
     let material = Material::with_pipeline(file_name.to_owned(), pipeline, pipeline_layout, globals, bind_groups);
