@@ -1,7 +1,7 @@
 use std::{any::Any, collections::HashMap, fmt::Debug, io::{BufReader, Cursor}, num::NonZero, sync::Arc};
 use anyhow::{Context, anyhow};
 use serde_yaml::Value;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState, naga::front::wgsl::parse_str};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexState, hal::auxil::db};
 
 // ???
 
@@ -73,24 +73,20 @@ pub async fn load_texture<'a>(
     file_name: &str,
     context: &'a mut crate::Context,
     resource_name: Option<&str>,
-) -> anyhow::Result<&'a mut Box<dyn Resource>> {
+) -> usize {
     let resource_name = match resource_name {
         Some(name) => name,
         None => file_name
     };
-    let id = context.renderer.shader_resources.index_of(resource_name);
-    if context.renderer.shader_resources.interner.map.contains_key(resource_name) {
-        return Ok(context.renderer.shader_resources.get_mut(id).unwrap())
-    }
-
-    let data = pollster::block_on(load_binary(file_name, &context.resources_path)).unwrap();
+    let data = pollster::block_on(load_binary(file_name, &context.resources_path)).with_context(|| file_name.to_owned()).unwrap();
     let tex = texture::Texture::from_bytes(&context.renderer.device, &context.renderer.queue, &data, file_name).unwrap();
-    context.renderer.shader_resources.insert(&format!("sampler::{}", resource_name), Box::new(tex.sampler));
-    context.renderer.shader_resources.insert(&format!("texture::{}", resource_name), Box::new(tex.view));
-    
-    context.renderer.shader_resources.insert(resource_name, Box::new(tex));
-
-    context.renderer.shader_resources.get_mut(id)
+    // context.renderer.shader_resources.insert(resource_name, Box::new(tex));
+    let id = context.renderer.shader_resources.index_of(resource_name);
+    let entry = context.renderer.shader_resources.entry(id);
+    entry.or_insert_with(|| {
+        Box::new(tex)
+    });
+    id
 }
 
 /// i hope this isnt public
@@ -218,7 +214,7 @@ pub async fn load_omi(
                     }
                 },
                 "SAMPLER" => {
-                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), context, None).await;
+                    let _ = load_texture(parse_yaml!(entry.get("image_path"), as_str, "image_path"), context, Some(parse_yaml!(entry.get("resource"), as_str, "resource"))).await;
                     BindingType::Sampler(match parse_yaml!(entry.get("sampler"), as_str, "sampler") {
                         "FILTERING" => wgpu::SamplerBindingType::Filtering,
                         "COMPARISON" => wgpu::SamplerBindingType::Comparison,
@@ -227,7 +223,7 @@ pub async fn load_omi(
                     })
                 },
                 "TEXTURE" => {
-                    let _ = load_texture(parse_yaml!(entry.get("resource"), as_str, "resource"), context, None).await;
+                    let _ = load_texture(parse_yaml!(entry.get("image_path"), as_str, "image_path"), context, Some(parse_yaml!(entry.get("resource"), as_str, "resource"))).await;
                     let tex = unwrap_yaml!(entry.get("texture"), "texture");
                     BindingType::Texture { 
                         sample_type: match parse_yaml!(tex.get("sampler_type"), as_str, "sampler_type") {
@@ -755,7 +751,7 @@ impl Interner {
 /// this might be a stupid implementation but whatever
 pub struct ResourceCollection<T: 'static> {
     interner: Interner,
-    pub resources: Vec<T>
+    pub resources: Vec<Option<T>>
 }
 impl<T: 'static> ResourceCollection<T> {
     pub fn new() -> Self {
@@ -768,18 +764,17 @@ impl<T: 'static> ResourceCollection<T> {
     pub fn insert(&mut self, key: &str, value: T) -> usize {
         let id = self.interner.intern(key);
 
-        if id == self.resources.len() {
-            // Perfect case: next sequential ID → push is fastest possible
-            self.resources.push(value);
-        } else if id < self.resources.len() {
-            // Replace existing
-            self.resources[id] = value;
-        } else { unreachable!() }
+        if id >= self.resources.len() {
+            self.resources.resize_with(id + 1, || None);
+        }
+        dbg!(key, id);
+        self.resources[id] = Some(value);
 
         id
     }
     
     pub fn index_of(&mut self, key: &str) -> usize {
+        dbg!(key);
         return self.interner.intern(key);
     }
 
@@ -794,13 +789,14 @@ impl<T: 'static> ResourceCollection<T> {
         if self.resources.len() <= index {
             return Err(anyhow!("x_x :: tried to get resource collection item greater that collection len!"))
         }
-        Ok(&self.resources[index])
+        dbg!(index);
+        Ok(self.resources[index].as_ref().with_context(|| "x_x :: tried to get uninitialized resource collection item")?)
     }
     pub fn get_mut(&mut self, index: usize) -> anyhow::Result<&mut T> {
-                if self.resources.len() <= index {
+        if self.resources.len() <= index {
             return Err(anyhow!("x_x :: tried to get_mut resource collection item greater that collection len!"))
         }
-        Ok(&mut self.resources[index])
+        Ok(self.resources[index].as_mut().expect("x_x :: tried to get uninitialized resource collection item"))
     }
     pub fn entry(&mut self, index: usize) -> ResourceEntry<'_, T> {
         ResourceEntry { id: index, collection: self }
@@ -833,34 +829,31 @@ impl<'a, T: 'static> ResourceEntry<'a, T> {
     pub fn exists(&self) -> bool {
         self.id < self.collection.resources.len()
     }
-
+    
     /// Inserts created value if missing, using the closure.
     /// If the slot already exists returns &mut existing.
     pub fn or_insert_with<F: FnOnce() -> T>(self, f: F) -> &'a mut T {
         let id = self.id;
         let coll = self.collection;
 
-        if id < coll.resources.len() {
-            // slot exists — return it
-            &mut coll.resources[id]
-        } else if id == coll.resources.len() {
-            // next sequential id — push the created value
-            coll.resources.push(f());
-            &mut coll.resources[id]
-        } else { unreachable!() }
+        if id >= coll.resources.len() {
+            coll.resources.resize_with(id + 1, || None);
+            coll.resources[id] = Some(f());
+        }
+        coll.resources[id].as_mut().unwrap()
     }
 
     /// Get mutable reference if already present — None if absent.
     pub fn get_mut(self) -> Option<&'a mut T> {
         if self.id < self.collection.resources.len() {
-            Some(&mut self.collection.resources[self.id])
+            Some(self.collection.resources[self.id].as_mut().expect("x_x :: tried to get uninitialized resources item"))
         } else {
             None
         }
     }
     pub fn get(self) -> Option<&'a T> {
         if self.id < self.collection.resources.len() {
-            Some(&self.collection.resources[self.id])
+            Some(&self.collection.resources[self.id].as_ref().expect("x_x :: tried to get uninitialized resources item"))
         } else {
             None
         }

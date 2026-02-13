@@ -164,10 +164,7 @@ impl Material {
     pub fn screen_target(format: TextureFormat) -> ColorTargetState {
         wgpu::ColorTargetState {
             format: format,
-            blend: Some(wgpu::BlendState {
-                color: wgpu::BlendComponent::REPLACE,
-                alpha: wgpu::BlendComponent::REPLACE,
-            }),    
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),    
             write_mask: wgpu::ColorWrites::ALL,
         }
     }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 custom_vertex = ["lazy_static"]
+rapier3d = ["dep:rapier3d"]
 
 [dependencies]
 derive_resource = { path = "./derive_resource" }
@@ -26,6 +27,7 @@ nohash-hasher = "0.2.0"
 glam = { version = "0.30.9", features = ["bytemuck"] }
 rand = "0.9.2"
 rand_distr = "0.5.1"
+rapier3d = { version = "0.32.0", optional = true }
 
 [build-dependencies]
 anyhow = "1.0.98"

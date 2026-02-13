@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use crate::{Resource, resources::Resource};
-use winit::{event::{DeviceEvent, DeviceId, ElementState, WindowEvent}, event_loop::ActiveEventLoop, keyboard::PhysicalKey};
+use winit::{event::{DeviceEvent, DeviceId, ElementState, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}};
 
 #[derive(Clone, Debug, Resource)]
 pub struct KeyboardData {
@@ -21,8 +21,8 @@ impl KeyboardData {
         self.prev_pressed = self.pressed.clone();
     }
 
-    pub fn is_pressed(&self, key: PhysicalKey) -> bool {
-        self.pressed.contains(&key)
+    pub fn is_pressed(&self, key: KeyCode) -> bool {
+        self.pressed.contains(&PhysicalKey::Code(key))
     }
     pub fn just_pressed(&self, key: PhysicalKey) -> bool {
         //println!("AAAA {key:?} {} {}", self.pressed.contains(&key), self.prev_pressed.contains(&key));

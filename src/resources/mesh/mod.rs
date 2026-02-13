@@ -111,64 +111,61 @@ impl Mesh {
 }*/
 
 pub fn new_cube(position: [f32; 3], scale: [f32; 3], shader_path: &str, renderer: &mut Renderer) -> Mesh {
-    let verts = &[
-            ModelVertex {
-                position: [0.0 + position[0], 0.0 + position[1], 0.0 + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [scale[0] + position[0], 0.0 + position[1], 0.0 + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [0.0 + position[0], scale[1] + position[1], 0.0 + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [scale[0] + position[0], scale[1] + position[1], 0.0 + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [0.0 + position[0], 0.0 + position[1], scale[2] + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [scale[0] + position[0], 0.0 + position[1], scale[2] + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [0.0 + position[0], scale[1] + position[1], scale[2] + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-            ModelVertex {
-                position: [scale[0] + position[0], scale[1] + position[1], scale[2] + position[2]],
-                tex_coords: [0.0, 0.0],
-                normal: [0., 0., 0.]
-            },
-        ];
+    let [px, py, pz] = position;
+    let [sx, sy, sz] = scale;
 
-    let indices = &[
-            0, 1, 2,
-            1, 3, 2,   
-            0, 2, 4,   
-            4, 2, 6,   
-            1, 5, 3,   
-            5, 7, 3,   
-            0, 4, 1,   
-            4, 5, 1,   
-            2, 3, 6,   
-            6, 3, 7,   
-            4, 6, 5,   
-            6, 7, 5
-        ];
-    Mesh::new(verts, indices, renderer.materials.index_of(shader_path), renderer)
+    // Half extents
+    let hx = sx * 0.5;
+    let hy = sy * 0.5;
+    let hz = sz * 0.5;
+
+    // Corner positions
+    let p000 = [px - hx, py - hy, pz - hz];
+    let p001 = [px - hx, py - hy, pz + hz];
+    let p010 = [px - hx, py + hy, pz - hz];
+    let p011 = [px - hx, py + hy, pz + hz];
+    let p100 = [px + hx, py - hy, pz - hz];
+    let p101 = [px + hx, py - hy, pz + hz];
+    let p110 = [px + hx, py + hy, pz - hz];
+    let p111 = [px + hx, py + hy, pz + hz];
+
+    let mut vertices = Vec::with_capacity(24);
+
+    // Helper
+    let mut face = |a, b, c, d, normal| {
+        vertices.extend_from_slice(&[
+            ModelVertex { position: a, tex_coords: [0.0, 0.0], normal },
+            ModelVertex { position: b, tex_coords: [1.0, 0.0], normal },
+            ModelVertex { position: c, tex_coords: [1.0, 1.0], normal },
+            ModelVertex { position: d, tex_coords: [0.0, 1.0], normal },
+        ]);
+    };
+
+    // +Z (front)
+    face(p001, p101, p111, p011, [0.0, 0.0, 1.0]);
+    // -Z (back)
+    face(p100, p000, p010, p110, [0.0, 0.0, -1.0]);
+    // +X (right)
+    face(p101, p100, p110, p111, [1.0, 0.0, 0.0]);
+    // -X (left)
+    face(p000, p001, p011, p010, [-1.0, 0.0, 0.0]);
+    // +Y (top)
+    face(p010, p011, p111, p110, [0.0, 1.0, 0.0]);
+    // -Y (bottom)
+    face(p000, p100, p101, p001, [0.0, -1.0, 0.0]);
+
+    let indices: Vec<u32> = (0..6)
+        .flat_map(|i| {
+            let base = i * 4;
+            [
+                base, base + 1, base + 2,
+                base, base + 2, base + 3,
+            ]
+        })
+        .map(|i| i as u32)
+        .collect();
+
+    Mesh::new(vertices, indices, renderer.materials.index_of(shader_path), renderer)
 }
 
 pub trait DrawModel<'a> {

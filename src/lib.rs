@@ -10,7 +10,6 @@ pub use glam;
 // TODO remove this
 pub use bytemuck;
 use wgpu::RenderPass;
-
 use std::{iter, sync::Arc, time::Instant};
 
 pub use derive_resource::Resource;
@@ -46,6 +45,11 @@ pub struct Context {
     pub mouse: MouseData,
     /// keyboard input information
     pub keyboard: KeyboardData,
+
+    #[cfg(feature = "rapier3d")]
+    /// rapier3d physics context
+    pub rapier: rapier::RapierContext<(),()>,
+
 }
 
 impl Context {
@@ -61,7 +65,10 @@ impl Context {
             resources_path: None,
 
             mouse: MouseData::new(true),
-            keyboard: KeyboardData::new()
+            keyboard: KeyboardData::new(),
+
+            #[cfg(feature = "rapier3d")]
+            rapier: rapier::RapierContext::new((), ())
         })
     }
 
@@ -171,6 +178,7 @@ pub trait AppHandler: Sized {
 pub mod prelude {
     pub use glam;
     pub use wgpu;
+    pub use winit;
     pub use crate::{
         renderer::{Renderer, Instance},
         Context,
@@ -183,4 +191,61 @@ pub mod prelude {
         }
 
     };
+}
+
+#[cfg(feature = "rapier3d")]
+pub mod rapier {
+    use rapier3d::prelude::*;
+    use glam::Vec3;
+    
+    pub struct RapierContext<H: PhysicsHooks, E: EventHandler> {
+        pub gravity: Vec3,
+        pub integration_parameters: IntegrationParameters,
+        pub physics_pipeline: PhysicsPipeline,
+        pub island_manager: IslandManager,
+        pub broad_phase: BroadPhaseBvh,
+        pub narrow_phase: NarrowPhase,
+        pub ccd_solver: CCDSolver,
+        pub impulse_joint_set: ImpulseJointSet,
+        pub multibody_joint_set: MultibodyJointSet,
+        pub rigid_body_set: RigidBodySet,
+        pub collider_set: ColliderSet,
+        pub physics_hooks: H,
+        pub event_handler: E
+    }
+    impl<H: PhysicsHooks, E: EventHandler> RapierContext<H, E> {
+        pub fn new(physics_hooks: H, event_handler: E) -> Self {
+            Self {
+                rigid_body_set: RigidBodySet::new(),
+                collider_set: ColliderSet::new(),
+                gravity: Vec3::new(0., -9.81, 0.),
+                integration_parameters: IntegrationParameters::default(),
+                physics_pipeline: PhysicsPipeline::new(),
+                island_manager: IslandManager::new(),
+                broad_phase: DefaultBroadPhase::new(),
+                narrow_phase: NarrowPhase::new(),
+                impulse_joint_set: ImpulseJointSet::new(),
+                multibody_joint_set: MultibodyJointSet::new(),
+                ccd_solver: CCDSolver::new(),
+                physics_hooks,
+                event_handler,
+            }
+        }
+        pub fn step(&mut self) {
+            self.physics_pipeline.step(
+                self.gravity,
+                &self.integration_parameters,
+                &mut self.island_manager,
+                &mut self.broad_phase,
+                &mut self.narrow_phase,
+                &mut self.rigid_body_set,
+                &mut self.collider_set,
+                &mut self.impulse_joint_set,
+                &mut self.multibody_joint_set,
+                &mut self.ccd_solver,
+                &self.physics_hooks,
+                &self.event_handler,
+            );
+        }
+    }
 }
