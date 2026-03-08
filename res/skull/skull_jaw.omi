@@ -19,11 +19,13 @@ bind_groups:
           multisampled: false
           filterable: true
         count: null
+        image_path: skull/Skull_Jaw_BaseColor.png
         resource: skull/Skull_Jaw_BaseColor.png
       - binding: 1
         visibility: [FRAGMENT]
         type: SAMPLER
         sampler: FILTERING
+        image_path: skull/Skull_Jaw_BaseColor.png
         resource: skull/Skull_Jaw_BaseColor.png
         count: null
       - binding: 2
@@ -38,3 +40,4 @@ bind_groups:
 buffers:
   - MODEL_VERTEX
   - INSTANCE
+immediate_size: 0

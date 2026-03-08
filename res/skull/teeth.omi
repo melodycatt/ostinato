@@ -18,12 +18,14 @@ bind_groups:
           view_dimension: D2
           multisampled: false
           filterable: true
+        image_path: skull/Teeth_BaseColor.png
         resource: skull/Teeth_BaseColor.png
         count: null
       - binding: 1
         visibility: [FRAGMENT]
         type: SAMPLER
         sampler: FILTERING
+        image_path: skull/Teeth_BaseColor.png
         resource: skull/Teeth_BaseColor.png
         count: null
       - binding: 2
@@ -38,3 +40,4 @@ bind_groups:
 buffers:
   - MODEL_VERTEX
   - INSTANCE
+immediate_size: 0

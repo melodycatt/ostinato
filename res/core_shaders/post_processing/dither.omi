@@ -1,0 +1,14 @@
+entry_points:
+  vertex:
+    module: core_shaders/post_processing/white_dither.wgsl
+    function: vs_main
+  fragment:
+    module: core_shaders/post_processing/white_dither.wgsl
+    function: fs_main
+post_processor: true
+shared_bind_groups:
+  - time
+  - resolution
+vertex_buffers:
+  - ModelVertex
+immediate_size: 112

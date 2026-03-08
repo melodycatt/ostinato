@@ -1,39 +1,43 @@
+mod app;
 pub mod camera;
 pub mod input;
-pub mod resources;
-pub mod renderer;
 pub mod particle;
-mod app;
+pub mod renderer;
+pub mod resources;
 pub use app::*;
-pub use wgpu;
 pub use glam;
+pub use wgpu;
 // TODO remove this
 pub use bytemuck;
-use wgpu::RenderPass;
 use std::{iter, sync::Arc, time::Instant};
-
-pub use derive_resource::Resource;
+use wgpu::RenderPass;
 
 // TODO: make this customizable
 pub const WIDTH: u32 = 1000;
 pub const HEIGHT: u32 = 1000;
 
-use winit::{event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::Window};
+use winit::{
+    event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent},
+    event_loop::ActiveEventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
+};
 
-use crate::{input::{keyboard::KeyboardData, mouse::MouseData}, renderer::Renderer};
-//TODO: clean up imports
-
+use crate::{
+    input::{keyboard::KeyboardData, mouse::MouseData},
+    renderer::Renderer,
+};
 
 /// context; all the information required to run the app
 pub struct Context {
     /// handles alll the rendering shit
     pub renderer: Renderer,
-        
+
     /// stored resource indices for speed
     /// will often be pre-set seeing as i know the order of my own default resources
     /// sorry, its magic numbers - i lowkey think theyre fun sometimes
     resource_indices: [usize; 1],
-    pub(crate)resources_path: Option<String>,
+    pub(crate) resources_path: Option<String>,
 
     delta_instant: Instant,
     /// time between frames, in seconds
@@ -48,13 +52,12 @@ pub struct Context {
 
     #[cfg(feature = "rapier3d")]
     /// rapier3d physics context
-    pub rapier: rapier::RapierContext<(),()>,
-
+    pub rapier: rapier::RapierContext<(), ()>,
 }
 
 impl Context {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             renderer: Renderer::new(window).await?,
             // in order:
             // time buffer
@@ -68,7 +71,7 @@ impl Context {
             keyboard: KeyboardData::new(),
 
             #[cfg(feature = "rapier3d")]
-            rapier: rapier::RapierContext::new((), ())
+            rapier: rapier::RapierContext::new((), ()),
         })
     }
 
@@ -88,11 +91,18 @@ impl Context {
         self.delta = self.delta_instant.elapsed().as_secs_f64();
         self.delta_instant = Instant::now();
 
-        let time_buffer = self.renderer.shader_resources.downcast_mut::<wgpu::Buffer>(self.resource_indices[0]).unwrap();
-        self.renderer.queue.write_buffer(&time_buffer, 0, bytemuck::cast_slice(&[self.start.elapsed().as_secs_f32()]));
+        let time_buffer = self
+            .renderer
+            .get_shared_resource(self.resource_indices[0])
+            .as_inner_buffer();
+        self.renderer.queue.write_buffer(
+            time_buffer,
+            0,
+            bytemuck::cast_slice(&[self.start.elapsed().as_secs_f32()]),
+        );
 
         handler.update(self)?;
-        
+
         self.mouse.update();
         self.keyboard.update();
 
@@ -129,20 +139,20 @@ impl Context {
         self.mouse.window_event(event_loop, window_id, &event);
         self.keyboard.window_event(event_loop, window_id, &event);
 
-        match event {
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => {
-                self.renderer.window.set_cursor_visible(true);
-                self.renderer.window.set_cursor_grab(winit::window::CursorGrabMode::None)?;
-            },
-            _ => {}
+        if let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    ..
+                },
+            ..
+        } = event
+        {
+            self.renderer.window.set_cursor_visible(true);
+            self.renderer
+                .window
+                .set_cursor_grab(winit::window::CursorGrabMode::None)?;
         }
         Ok(())
     }
@@ -155,8 +165,11 @@ impl Context {
     ) {
         self.mouse.device_event(event_loop, device_id, &event);
     }
-}
 
+    /*pub fn set_camera(&mut self, camera: &Camera) {
+        self.renderer.shared_bind_groups.
+    }*/
+}
 
 pub trait AppHandler: Sized {
     #[allow(async_fn_in_trait)]
@@ -165,39 +178,33 @@ pub trait AppHandler: Sized {
     /// called once every frame. you are given one `RenderPass`
     /// if you want another, contribute to the library and make `Context` a trait so you can make custom event loops
     // TODO not make this a surfacerror
-    fn render(&mut self, context: &mut Context, pass: &mut RenderPass<'_>) -> anyhow::Result<(), wgpu::SurfaceError>;
+    fn render(
+        &mut self,
+        context: &mut Context,
+        pass: &mut RenderPass<'_>,
+    ) -> anyhow::Result<(), wgpu::SurfaceError>;
     /// called once before `render`
     fn update(&mut self, context: &mut Context) -> anyhow::Result<()>;
     // called when the app is started, since you dont have `context` properly initialised until then
     //fn init(&mut self, context: &mut Context) -> impl std::future::Future<Output = anyhow::Result<()>>;
-} 
-
-
-
+}
 
 pub mod prelude {
+    pub use crate::{
+        AppHandler, Context, camera,
+        renderer::{Instance, Renderable, Renderer},
+        resources::{Mesh, load_material, load_model},
+    };
     pub use glam;
     pub use wgpu;
     pub use winit;
-    pub use crate::{
-        renderer::{Renderer, Instance},
-        Context,
-        AppHandler,
-        camera,
-        resources::{
-            Mesh,
-            load_material,
-            load_model
-        }
-
-    };
 }
 
 #[cfg(feature = "rapier3d")]
 pub mod rapier {
-    use rapier3d::prelude::*;
     use glam::Vec3;
-    
+    use rapier3d::prelude::*;
+
     pub struct RapierContext<H: PhysicsHooks, E: EventHandler> {
         pub gravity: Vec3,
         pub integration_parameters: IntegrationParameters,
@@ -211,7 +218,7 @@ pub mod rapier {
         pub rigid_body_set: RigidBodySet,
         pub collider_set: ColliderSet,
         pub physics_hooks: H,
-        pub event_handler: E
+        pub event_handler: E,
     }
     impl<H: PhysicsHooks, E: EventHandler> RapierContext<H, E> {
         pub fn new(physics_hooks: H, event_handler: E) -> Self {

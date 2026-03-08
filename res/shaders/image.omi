@@ -13,7 +13,7 @@ bind_groups:
           multisampled: false
           view_dimension: D2
           sampler_type: FLOAT
-          filterable: true
+        filterable: true
         count: null
         resource: texture::crow
       - binding: 1

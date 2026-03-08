@@ -1,12 +1,11 @@
 use anyhow::*;
 use image::GenericImageView;
-use crate::resources::Resource;
 
 #[derive(Debug)]
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler
+    pub sampler: wgpu::Sampler,
 }
 
 impl Texture {
@@ -83,9 +82,10 @@ impl Texture {
 
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float; // 1.
-    
+
     pub fn create_depth_texture(device: &wgpu::Device, dim: (u32, u32), label: &str) -> Self {
-        let size = wgpu::Extent3d { // 2.
+        let size = wgpu::Extent3d {
+            // 2.
             width: dim.0.max(1),
             height: dim.1.max(1),
             depth_or_array_layers: 1,
@@ -104,40 +104,24 @@ impl Texture {
         let texture = device.create_texture(&desc);
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(
-            &wgpu::SamplerDescriptor { // 4.
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                compare: Some(wgpu::CompareFunction::LessEqual), // 5.
-                lod_min_clamp: 0.0,
-                lod_max_clamp: 100.0,
-                ..Default::default()
-            }
-        );
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            // 4.
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual), // 5.
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 100.0,
+            ..Default::default()
+        });
 
-        Self { texture, view, sampler }
-    }
-}
-
-impl Resource for Texture {
-    /// for clarity, `binding()` is not implemented for Texture.
-    /// instead, you have to call it individually on the `view` and `sampler` fields
-    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
-        Err(anyhow!("x_x :: tried to get a BindingResource from a texture. did you mean to call `.texture.binding()`?"))
-    }
-}
-
-impl Resource for wgpu::TextureView {
-    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
-        Ok(wgpu::BindingResource::TextureView(self))
-    }
-}
-impl Resource for wgpu::Sampler {
-    fn binding<'a>(&'a self) -> anyhow::Result<wgpu::BindingResource<'a>> {
-        Ok(wgpu::BindingResource::Sampler(self))
+        Self {
+            texture,
+            view,
+            sampler,
+        }
     }
 }

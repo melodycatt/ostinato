@@ -1,0 +1,40 @@
+entry_points:
+  vertex:
+    module: core_shaders/wireframe.wgsl
+    function: vs_main
+  fragment:
+    module: core_shaders/wireframe.wgsl
+    function: fs_main
+shared_bind_groups:
+  - CAMERA
+bind_groups:
+  - label: "vertex and index things"
+    manual: true
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+          - VERTEX
+          - COMPUTE
+          - MESH
+          - TASK
+        type: BUFFER
+        buffer:
+          type: READ_ONLY_STORAGE
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
+      - binding: 1
+        visibility:
+          - FRAGMENT
+          - VERTEX
+          - COMPUTE
+          - MESH
+          - TASK
+        type: BUFFER
+        buffer:
+          type: READ_ONLY_STORAGE
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
+immediate_size: 128

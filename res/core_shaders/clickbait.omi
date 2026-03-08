@@ -1,0 +1,15 @@
+entry_points:
+  vertex:
+    module: core_shaders/clickbait.wgsl
+    function: vs_main
+  fragment:
+    module: core_shaders/clickbait.wgsl
+    function: fs_main
+shared_bind_groups:
+  - CAMERA
+vertex_buffers:
+  - Float32x2
+instance_buffers:
+  - Float32x3
+immediate_size: 112
+always_on_top: true

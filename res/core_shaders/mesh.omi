@@ -1,0 +1,12 @@
+entry_points:
+  vertex:
+    module: shaders/mesh.wgsl
+    function: vs_main
+  fragment:
+    module: shaders/mesh.wgsl
+    function: fs_main
+bind_groups:
+  - preset: CAMERA
+vertex_buffers:
+  - MODEL_VERTEX
+immediate_size: 64

@@ -1,12 +1,14 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use glam::{Quat, Vec3};
-use crate::{Resource, resources::Resource};
-use winit::{keyboard::{KeyCode}};
+use winit::keyboard::KeyCode;
 
-use crate::{camera::{Camera}, input::{keyboard::KeyboardData, mouse::MouseData}};
+use crate::{
+    camera::Camera,
+    input::{keyboard::KeyboardData, mouse::MouseData},
+};
 
-#[derive(Debug, Resource)]
+#[derive(Debug)]
 pub struct CameraController {
     pub sens: f32,
     pub speed: f32,
@@ -20,7 +22,7 @@ impl CameraController {
             sens: sens * 0.003,
             speed,
             pitch: 0.0,
-            yaw: PI
+            yaw: 0.,
         }
     }
 
@@ -60,30 +62,59 @@ impl CameraController {
         }
     }*/
 
-    pub fn update_camera(&mut self, camera: &mut Camera, mouse: &MouseData, keyboard: &KeyboardData) {
+    pub fn update_camera(
+        &mut self,
+        camera: &mut Camera,
+        mouse: &MouseData,
+        keyboard: &KeyboardData,
+    ) {
         //use cgmath::InnerSpace;
         //println!("{:?}", mouse.delta);
-        if keyboard.is_pressed(KeyCode::KeyW.into())
-        || keyboard.is_pressed(KeyCode::ArrowUp.into()) {
-            camera.eye += camera.rotation * Vec3 { x: 0.0, y: 0.0, z: -self.speed };
+        if keyboard.is_pressed(KeyCode::KeyW) || keyboard.is_pressed(KeyCode::ArrowUp) {
+            camera.eye += camera.rotation
+                * Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: -self.speed,
+                };
         }
-        if keyboard.is_pressed(KeyCode::KeyS.into())
-        || keyboard.is_pressed(KeyCode::ArrowDown.into()) {
-            camera.eye += camera.rotation * Vec3 { x: 0.0, y: 0.0, z: self.speed };
+        if keyboard.is_pressed(KeyCode::KeyS) || keyboard.is_pressed(KeyCode::ArrowDown) {
+            camera.eye += camera.rotation
+                * Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: self.speed,
+                };
         }
-        if keyboard.is_pressed(KeyCode::KeyA.into())
-        || keyboard.is_pressed(KeyCode::ArrowLeft.into()) {
-            camera.eye += camera.rotation * Vec3 { x: -self.speed, y: 0.0, z: 0.0 };
+        if keyboard.is_pressed(KeyCode::KeyA) || keyboard.is_pressed(KeyCode::ArrowLeft) {
+            camera.eye += camera.rotation
+                * Vec3 {
+                    x: -self.speed,
+                    y: 0.0,
+                    z: 0.0,
+                };
         }
-        if keyboard.is_pressed(KeyCode::KeyD.into())
-        || keyboard.is_pressed(KeyCode::ArrowRight.into()) {
-            camera.eye += camera.rotation * Vec3 { x: self.speed, y: 0.0, z: 0.0 };
+        if keyboard.is_pressed(KeyCode::KeyD) || keyboard.is_pressed(KeyCode::ArrowRight) {
+            camera.eye += camera.rotation
+                * Vec3 {
+                    x: self.speed,
+                    y: 0.0,
+                    z: 0.0,
+                };
         }
-        if keyboard.is_pressed(KeyCode::KeyE.into()) {
-            camera.eye += Vec3 { y: self.speed, x: 0.0, z: 0.0 };
+        if keyboard.is_pressed(KeyCode::KeyE) {
+            camera.eye += Vec3 {
+                y: self.speed,
+                x: 0.0,
+                z: 0.0,
+            };
         }
-        if keyboard.is_pressed(KeyCode::KeyQ.into()) {
-            camera.eye += Vec3 { y: -self.speed, x: 0.0, z: 0.0 };
+        if keyboard.is_pressed(KeyCode::KeyQ) {
+            camera.eye += Vec3 {
+                y: -self.speed,
+                x: 0.0,
+                z: 0.0,
+            };
         }
 
         self.yaw -= mouse.delta[0] as f32 * self.sens;

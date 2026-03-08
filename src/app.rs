@@ -1,20 +1,24 @@
+use crate::{AppHandler, Context, HEIGHT, WIDTH};
 use std::sync::Arc;
-use glam::Vec3;
-use wgpu::util::DeviceExt;
-use winit::{application::ApplicationHandler, dpi::{PhysicalSize, Size}, event::{DeviceEvent, DeviceId, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, window::Window};
-use crate::{AppHandler, Context, HEIGHT, WIDTH, resources::Model, particle::{EmitterConfig, ParticleEmitter}};
+use winit::{
+    application::ApplicationHandler,
+    dpi::{PhysicalSize, Size},
+    event::{DeviceEvent, DeviceId, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
+    window::Window,
+};
 
 // TODO remove wasm its annoying and uselesss since we use line polygon mode feature anyway
 
 /// this holds everything and interfaces with wgpu
-struct App<T: AppHandler+'static> {
+struct App<T: AppHandler + 'static> {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
     context: Option<Context>,
-    app_handler: Option<T>
+    app_handler: Option<T>,
 }
 
-impl<T: AppHandler+'static> App<T> {
+impl<T: AppHandler + 'static> App<T> {
     pub fn new(#[cfg(target_arch = "wasm32")] event_loop: &EventLoop<State>) -> Self {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
@@ -27,11 +31,15 @@ impl<T: AppHandler+'static> App<T> {
     }
 }
 
-impl<T: AppHandler+'static> ApplicationHandler<Context> for App<T> {
+impl<T: AppHandler + 'static> ApplicationHandler<Context> for App<T> {
     // emits when it starts i think
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // TODO: ALLOW CUSTOMIZABLE DIMENSIONS
-        let window_attributes = Window::default_attributes().with_inner_size(Size::Physical(PhysicalSize { width: WIDTH, height: HEIGHT }));
+        let window_attributes =
+            Window::default_attributes().with_inner_size(Size::Physical(PhysicalSize {
+                width: WIDTH,
+                height: HEIGHT,
+            }));
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -61,13 +69,15 @@ impl<T: AppHandler+'static> ApplicationHandler<Context> for App<T> {
         {
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
-                    assert!(proxy
-                        .send_event(
-                            State::new(window)
-                                .await
-                                .expect("Unable to create canvas!!!")
-                        )
-                        .is_ok())
+                    assert!(
+                        proxy
+                            .send_event(
+                                State::new(window)
+                                    .await
+                                    .expect("Unable to create canvas!!!")
+                            )
+                            .is_ok()
+                    )
                 });
             }
         }
@@ -106,7 +116,7 @@ impl<T: AppHandler+'static> ApplicationHandler<Context> for App<T> {
             WindowEvent::RedrawRequested => {
                 let handler = match &mut self.app_handler {
                     Some(handler) => handler,
-                    None => return
+                    None => return,
                 };
                 context.update(handler).expect("update error");
                 match context.render(handler) {
@@ -121,16 +131,20 @@ impl<T: AppHandler+'static> ApplicationHandler<Context> for App<T> {
                     }
                 };
             }
-            _ => { context.window_event(event_loop, window_id, event).expect("x_x :: AAAA AAAAAAAA WERE ALL GONNA DIE"); }
+            _ => {
+                context
+                    .window_event(event_loop, window_id, event)
+                    .expect("x_x :: AAAA AAAAAAAA WERE ALL GONNA DIE");
+            }
         }
     }
 
     /// mostlt mouse stuff
     fn device_event(
-            &mut self,
-            event_loop: &ActiveEventLoop,
-            device_id: DeviceId,
-            event: DeviceEvent,
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: DeviceId,
+        event: DeviceEvent,
     ) {
         let state = match &mut self.context {
             Some(canvas) => canvas,
@@ -167,143 +181,4 @@ pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
     run().unwrap_throw();
 
     Ok(())
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct SkullUniform {
-    ka: [f32; 3],
-    _pad1: f32,
-    kd: [f32; 3],
-    _pad2: f32,
-    ks: [f32; 3],
-    ns: f32
-}
-
-
-/// example handler. not for outside use.
-/// full namespace paths so it doesnt clutter this file
-#[allow(dead_code)]
-struct ExampleHandler {
-    // cube: Option<crate::mesh::Mesh>,
-    // cube2: Option<crate::mesh::Mesh>,
-    emitter: crate::particle::ParticleEmitter,
-    camera: crate::camera::Camera,
-    camera_controller: crate::camera::CameraController,
-    skull: Model
-}
-
-impl AppHandler for ExampleHandler {
-    async fn new(context: &mut Context) -> anyhow::Result<Self> {
-        let camera = crate::camera::Camera::new(crate::camera::CameraConfig {
-            eye: (0.0, 5.0, 2.0).into(),
-            rotation: glam::Quat::from_axis_angle(glam::Vec3::Y, std::f32::consts::PI),
-            fovy: 60.0,
-            znear: 0.01,
-            zfar: 1000.0,
-        }, context.renderer.config.width as f32 / context.renderer.config.height as f32, &context.renderer.device);
-
-        
-        // TODO currently this MUST be done in init somewhere to not throw an error if camera shaders are loaded in init
-        // soooooo fix that ig
-        // or actually maybe you dont need to
-        context.renderer.shared_bind_groups.insert("CAMERA", (camera.bind_group.clone(), camera.bind_group_layout.clone()));
-        // let _ = anyhow::Context::with_context(crate::resources::load_shader("shaders/static", &mut context.renderer, Some("static_fill"), None).await, || "error when loading shader")?;
-        // self.cube = Some(crate::mesh::new_cube([0.,0.,0.], [1.,1.,1.], "static_fill", &mut context.renderer));
-        // let _ = anyhow::Context::with_context(crate::resources::load_shader("bathroom/blue", &mut context.renderer, Some("static_wire"), Some(wgpu::PrimitiveState { polygon_mode: wgpu::PolygonMode::Line, ..Default::default() })).await, || "error when loading shader")?;
-        // self.cube2 = Some(crate::mesh::new_cube([-0.05,-0.05,-0.05], [1.1,1.1,1.1], "static_wire", &mut context.renderer));
-        
-        // TODO this is so much code for so little and so muchg repetition
-        let skull_jaw_props = SkullUniform {
-            _pad1:0.,
-            _pad2:0.,
-            ka: [0.05087609, 0.05087609, 0.05087609],
-            kd: [0.5,0.5,0.5],
-            ks: [0.5,0.5,0.5],
-            ns: 25.
-        };
-        let teeth_props = SkullUniform {
-            ka: [0.05087609, 0.05087609, 0.05087609],
-            kd: [0.5,0.5,0.5],
-            _pad1:0.,
-            _pad2:0.,
-            ks: [0.5,0.5,0.5],
-            ns: 49.
-        };
-        let skull_top_props = SkullUniform {
-            _pad1:0.,
-            _pad2:0.,
-            ka: [0.05087609, 0.05087609, 0.05087609],
-            kd: [0.5,0.5,0.5],
-            ks: [0.5,0.5,0.5],
-            ns: 25.
-        };
-        let jaw_buffer = context.renderer.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("jaw Buffer"),
-                contents: bytemuck::cast_slice(&[skull_jaw_props]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }
-        );
-        context.renderer.shader_resources.insert("Skull_Jaw_Properties", Box::new(jaw_buffer));
-        let top_buffer = context.renderer.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("top Buffer"),
-                contents: bytemuck::cast_slice(&[skull_top_props]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }
-        );
-        context.renderer.shader_resources.insert("Skull_Top_Properties", Box::new(top_buffer));
-        let teeth_buffer = context.renderer.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("teeth Buffer"),
-                contents: bytemuck::cast_slice(&[teeth_props]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }
-        );
-        context.renderer.shader_resources.insert("Teeth_Properties", Box::new(teeth_buffer));
-        
-        let skull = crate::resources::load_model("skull/human_skull", context).await?;
-        
-        let emitter = ParticleEmitter::new(context, skull.meshes[0].clone(), EmitterConfig {
-            angular_velocities: crate::particle::RandomRange::Uniform(0., 10.0),
-            velocity_angle_range: crate::particle::RandomRange::Uniform(-1., -1.),
-            velocity_center_angle: glam::Quat::from_rotation_arc(Vec3::Z, Vec3::new(0., 1., 0.)),
-            velocity_magnitudes: crate::particle::RandomRange::Uniform(1.0, 5.0),
-            rotations: crate::particle::RandomRange::Constant(0.0),
-            speed: crate::particle::RandomRange::Uniform(0.5, 1.0),
-            scales: crate::particle::RandomRange::Uniform(0.05, 0.1),
-            gravity_magnitudes: crate::particle::RandomRange::Constant(9.8),
-            gravity_direction: Vec3::NEG_Y,
-            air_resistance: 0.01
-        }, Vec3::ZERO);
-        Ok(Self {
-            // cube: None,
-            // cube2: None,
-            emitter,
-            camera,
-            skull,
-            camera_controller: crate::camera::CameraController::new(0.15, 1./3.)
-        })
-    }
-    fn render(&mut self, context: &mut Context, pass: &mut wgpu::RenderPass<'_>) -> anyhow::Result<(), wgpu::SurfaceError> {
-        // TODO this looks like boilerplate!!!!!! stupid!!!!!!!! lets change that
-        // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube.as_ref().unwrap()).expect("AAA");
-        // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube2.as_ref().unwrap()).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[0]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[1]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[2]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[3]).expect("AAA");
-        self.emitter.render( &mut self.camera, &mut context.renderer, pass).expect("aaa");
-        Ok(())
-    }
-    fn update(&mut self, context: &mut Context) -> anyhow::Result<()> {
-        // TODO looks a little confusing to update camera. maybe make a method/macro for this?
-        self.camera_controller.update_camera(&mut self.camera, &context.mouse, &context.keyboard);
-        // maybe bundle these two lines into a Camera method that takes `&mut self, renderer: &mut Renderer`
-        self.camera.uniform.update_view_proj(self.camera.config());
-        context.renderer.queue.write_buffer(&self.camera.buffer, 0, bytemuck::cast_slice(&[self.camera.uniform]));
-        self.emitter.update(context)?;
-        Ok(())
-    }
 }
