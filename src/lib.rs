@@ -28,6 +28,10 @@ use crate::{
     renderer::Renderer,
 };
 
+// TODO: didnt know where to put this.
+// it would be nice to have some kind of render queue so that internally we can reorder draw calls
+// to, say, reduce how often we set bind groups
+//
 /// context; all the information required to run the app
 pub struct Context {
     /// handles alll the rendering shit
