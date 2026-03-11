@@ -7,8 +7,8 @@ use std::{
 };
 use wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, VertexBufferLayout,
-    VertexState,
+    BindingType, FragmentState, PrimitiveState, RenderPipelineDescriptor, ShaderModule,
+    VertexBufferLayout, VertexState,
 };
 
 // ???
@@ -16,6 +16,8 @@ use wgpu::{
 mod material;
 mod mesh;
 mod texture;
+
+pub mod pipeline;
 
 mod collection;
 pub use collection::*;
@@ -61,6 +63,21 @@ pub async fn load_string(file_name: &str, path: &Option<String>) -> anyhow::Resu
     };
 
     Ok(txt)
+}
+/// blocks
+pub fn load_shader(file_name: &str, context: &mut crate::Context) -> anyhow::Result<ShaderModule> {
+    let vert_text = pollster::block_on(crate::resources::load_string(
+        file_name,
+        &context.resources_path,
+    ))?;
+    let vert_descriptor = wgpu::ShaderModuleDescriptor {
+        label: Some(file_name),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&vert_text)),
+    };
+    Ok(context
+        .renderer
+        .device
+        .create_shader_module(vert_descriptor))
 }
 /// load to binary with `file_name` appended to res path
 pub async fn load_binary(file_name: &str, path: &Option<String>) -> anyhow::Result<Vec<u8>> {

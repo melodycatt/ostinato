@@ -1,3 +1,7 @@
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+#![feature(const_trait_impl)]
+#![feature(inherent_associated_types)]
 mod app;
 pub mod camera;
 pub mod input;
@@ -9,8 +13,8 @@ pub use glam;
 pub use wgpu;
 // TODO remove this
 pub use bytemuck;
-use std::{iter, sync::Arc, time::Instant};
-use wgpu::RenderPass;
+use std::{any::TypeId, iter, sync::Arc, time::Instant};
+use wgpu::{RenderPass, RenderPipeline};
 
 // TODO: make this customizable
 pub const WIDTH: u32 = 1000;
@@ -26,6 +30,7 @@ use winit::{
 use crate::{
     input::{keyboard::KeyboardData, mouse::MouseData},
     renderer::Renderer,
+    resources::pipeline::{MaterialType, SharedBindGroup},
 };
 
 // TODO: didnt know where to put this.
@@ -60,6 +65,16 @@ pub struct Context {
 }
 
 impl Context {
+    pub fn get_material_type_mut<T: MaterialType>(
+        &mut self,
+    ) -> &mut (SharedBindGroup, RenderPipeline) {
+        let pipeline = T::pipeline(self);
+        let bg = SharedBindGroup::from_generator::<T>(&mut self.renderer);
+        self.renderer
+            .material_types
+            .entry(TypeId::of::<T>())
+            .or_insert((bg, pipeline))
+    }
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         Ok(Self {
             renderer: Renderer::new(window).await?,

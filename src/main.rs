@@ -22,17 +22,6 @@ fn main() {
     ostinato::run::<ExampleHandler>().unwrap();
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Material {
-    ambient: [f32; 3],
-    _pad0: f32,
-    diffuse: [f32; 3],
-    _pad1: f32,
-    specular: [f32; 3],
-    shininess: f32,
-}
-
 /// example handler. not for outside use.
 /// full namespace paths so it doesnt clutter this file
 /// so much for above LOLW LOLW LOLW LOWL LOLW LOLW LOLW
