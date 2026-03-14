@@ -1924,6 +1924,7 @@ dependencies = [
  "rapier3d",
  "serde",
  "serde_yaml",
+ "smallvec",
  "tobj",
  "wgpu",
  "winit",

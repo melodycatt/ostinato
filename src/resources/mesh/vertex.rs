@@ -4,12 +4,12 @@ use std::fmt::Debug;
 #[cfg(feature = "custom_vertex")]
 use std::sync::Mutex;
 
-#[cfg(not(feature = "custom_vertex"))]
-use anyhow::anyhow;
+// #[cfg(not(feature = "custom_vertex"))]
+// use anyhow::anyhow;
 use bytemuck::{Pod, Zeroable};
 use wgpu::vertex_attr_array;
 
-use crate::renderer::InstanceRaw;
+// use crate::renderer::InstanceRaw;
 
 #[cfg(feature = "custom_vertex")]
 type BufferLayoutFn = fn(u32) -> BufferLayout;
@@ -27,259 +27,264 @@ pub fn register_type<T: VertexBuffer>(name: &str) {
         .insert(name.to_string(), T::buffer_layout);
 }
 
-pub struct BufferLayout {
-    pub attrs: Vec<wgpu::VertexAttribute>,
-    pub stride: u64,
-    pub step_mode: wgpu::VertexStepMode,
-}
+// pub struct BufferLayout<const N: usize> {
+//     pub attrs: [wgpu::VertexAttribute; N],
+//     pub stride: u64,
+//     pub step_mode: wgpu::VertexStepMode,
+// }
+//
+// pub fn vertex_from_name(name: &str, location: u32) -> anyhow::Result<BufferLayout> {
+//     match name {
+//         "ColorVertex" => Ok(ColorVertex::buffer_layout(location)),
+//         "TextureVertex" => Ok(TextureVertex::buffer_layout(location)),
+//         "ModelVertex" => Ok(ModelVertex::buffer_layout(location)),
+//         //"Instance" => Ok((InstanceRaw::attrs, InstanceRaw::desc)),
+//         // Float formats
+//
+//         // Float formats
+//         "Float32x2" => Ok(<SimpleVertex<[f32; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Float32x3" => Ok(<SimpleVertex<[f32; 3], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Float32x4" => Ok(<SimpleVertex<[f32; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 8-bit integer
+//         "Uint8" => Ok(<SimpleVertex<u8, StepVertex>>::buffer_layout(location)),
+//         "Uint8x2" => Ok(<SimpleVertex<[u8; 2], StepVertex>>::buffer_layout(location)),
+//         "Uint8x4" => Ok(<SimpleVertex<[u8; 4], StepVertex>>::buffer_layout(location)),
+//
+//         // Signed 8-bit integer
+//         "Sint8" => Ok(<SimpleVertex<i8, StepVertex>>::buffer_layout(location)),
+//         "Sint8x2" => Ok(<SimpleVertex<[i8; 2], StepVertex>>::buffer_layout(location)),
+//         "Sint8x4" => Ok(<SimpleVertex<[i8; 4], StepVertex>>::buffer_layout(location)),
+//
+//         // Normalized unsigned 8-bit
+//         "Unorm8x2" => Ok(<SimpleVertex<[Unorm8; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Unorm8x4" => Ok(<SimpleVertex<[Unorm8; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized signed 8-bit
+//         "Snorm8x2" => Ok(<SimpleVertex<[Snorm8; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Snorm8x4" => Ok(<SimpleVertex<[Snorm8; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 16-bit integer
+//         "Uint16" => Ok(<SimpleVertex<u16, StepVertex>>::buffer_layout(location)),
+//         "Uint16x2" => Ok(<SimpleVertex<[u16; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint16x4" => Ok(<SimpleVertex<[u16; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Signed 16-bit integer
+//         "Sint16" => Ok(<SimpleVertex<i16, StepVertex>>::buffer_layout(location)),
+//         "Sint16x2" => Ok(<SimpleVertex<[i16; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint16x4" => Ok(<SimpleVertex<[i16; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized unsigned 16-bit
+//         "Unorm16x2" => Ok(<SimpleVertex<[Unorm16; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Unorm16x4" => Ok(<SimpleVertex<[Unorm16; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized signed 16-bit
+//         "Snorm16x2" => Ok(<SimpleVertex<[Snorm16; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Snorm16x4" => Ok(<SimpleVertex<[Snorm16; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 32-bit integer
+//         "Uint32" => Ok(<SimpleVertex<u32, StepVertex>>::buffer_layout(location)),
+//         "Uint32x2" => Ok(<SimpleVertex<[u32; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint32x3" => Ok(<SimpleVertex<[u32; 3], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint32x4" => Ok(<SimpleVertex<[u32; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Signed 32-bit integer
+//         "Sint32" => Ok(<SimpleVertex<i32, StepVertex>>::buffer_layout(location)),
+//         "Sint32x2" => Ok(<SimpleVertex<[i32; 2], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint32x3" => Ok(<SimpleVertex<[i32; 3], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint32x4" => Ok(<SimpleVertex<[i32; 4], StepVertex>>::buffer_layout(
+//             location,
+//         )),
+//         _ => {
+//             #[cfg(feature = "custom_vertex")]
+//             return Ok(REGISTRY.lock().map_err(|_| anyhow::anyhow!("x_x :: tried to access poisoned or locked vertex registry when loading material (this will only be your fault, ostinato never uses the vertex registry)"))?
+//                     .get(name).ok_or(anyhow::anyhow!("x_x :: unregistered vertex type when loading material: {}", name))?());
+//             #[cfg(not(feature = "custom_vertex"))]
+//             return Err(anyhow!(
+//                 "x_x :: invalid vertex type when loading material: {}",
+//                 name
+//             ));
+//         }
+//     }
+// }
+// pub fn instance_from_name(name: &str, location: u32) -> anyhow::Result<BufferLayout> {
+//     match name {
+//         "Instance" => Ok(InstanceRaw::buffer_layout(location)),
+//         //
+//         // Float formats
+//
+//         // Float formats
+//         "Float32x2" => Ok(<SimpleVertex<[f32; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Float32x3" => Ok(<SimpleVertex<[f32; 3], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Float32x4" => Ok(<SimpleVertex<[f32; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 8-bit integer
+//         "Uint8" => Ok(<SimpleVertex<u8, StepInstance>>::buffer_layout(location)),
+//         "Uint8x2" => Ok(<SimpleVertex<[u8; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint8x4" => Ok(<SimpleVertex<[u8; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Signed 8-bit integer
+//         "Sint8" => Ok(<SimpleVertex<i8, StepInstance>>::buffer_layout(location)),
+//         "Sint8x2" => Ok(<SimpleVertex<[i8; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint8x4" => Ok(<SimpleVertex<[i8; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized unsigned 8-bit
+//         "Unorm8x2" => Ok(<SimpleVertex<[Unorm8; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Unorm8x4" => Ok(<SimpleVertex<[Unorm8; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized signed 8-bit
+//         "Snorm8x2" => Ok(<SimpleVertex<[Snorm8; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Snorm8x4" => Ok(<SimpleVertex<[Snorm8; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 16-bit integer
+//         "Uint16" => Ok(<SimpleVertex<u16, StepInstance>>::buffer_layout(location)),
+//         "Uint16x2" => Ok(<SimpleVertex<[u16; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint16x4" => Ok(<SimpleVertex<[u16; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Signed 16-bit integer
+//         "Sint16" => Ok(<SimpleVertex<i16, StepInstance>>::buffer_layout(location)),
+//         "Sint16x2" => Ok(<SimpleVertex<[i16; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint16x4" => Ok(<SimpleVertex<[i16; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized unsigned 16-bit
+//         "Unorm16x2" => Ok(<SimpleVertex<[Unorm16; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Unorm16x4" => Ok(<SimpleVertex<[Unorm16; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Normalized signed 16-bit
+//         "Snorm16x2" => Ok(<SimpleVertex<[Snorm16; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Snorm16x4" => Ok(<SimpleVertex<[Snorm16; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Unsigned 32-bit integer
+//         "Uint32" => Ok(<SimpleVertex<u32, StepInstance>>::buffer_layout(location)),
+//         "Uint32x2" => Ok(<SimpleVertex<[u32; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint32x3" => Ok(<SimpleVertex<[u32; 3], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Uint32x4" => Ok(<SimpleVertex<[u32; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//
+//         // Signed 32-bit integer
+//         "Sint32" => Ok(<SimpleVertex<i32, StepInstance>>::buffer_layout(location)),
+//         "Sint32x2" => Ok(<SimpleVertex<[i32; 2], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint32x3" => Ok(<SimpleVertex<[i32; 3], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         "Sint32x4" => Ok(<SimpleVertex<[i32; 4], StepInstance>>::buffer_layout(
+//             location,
+//         )),
+//         _ => {
+//             #[cfg(feature = "custom_vertex")]
+//             return Ok(REGISTRY.lock().map_err(|_| anyhow::anyhow!("x_x :: tried to access poisoned or locked vertex registry when loading material (this will only be your fault, ostinato never uses the vertex registry)"))?
+//                     .get(name).ok_or(anyhow::anyhow!("x_x :: unregistered vertex type when loading material: {}", name))?());
+//             #[cfg(not(feature = "custom_vertex"))]
+//             return Err(anyhow!(
+//                 "x_x :: invalid vertex type when loading material: {}",
+//                 name
+//             ));
+//         }
+//     }
+// }
 
-pub fn vertex_from_name(name: &str, location: u32) -> anyhow::Result<BufferLayout> {
-    match name {
-        "ColorVertex" => Ok(ColorVertex::buffer_layout(location)),
-        "TextureVertex" => Ok(TextureVertex::buffer_layout(location)),
-        "ModelVertex" => Ok(ModelVertex::buffer_layout(location)),
-        //"Instance" => Ok((InstanceRaw::attrs, InstanceRaw::desc)),
-        // Float formats
-
-        // Float formats
-        "Float32x2" => Ok(<SimpleVertex<[f32; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Float32x3" => Ok(<SimpleVertex<[f32; 3], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Float32x4" => Ok(<SimpleVertex<[f32; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 8-bit integer
-        "Uint8" => Ok(<SimpleVertex<u8, StepVertex>>::buffer_layout(location)),
-        "Uint8x2" => Ok(<SimpleVertex<[u8; 2], StepVertex>>::buffer_layout(location)),
-        "Uint8x4" => Ok(<SimpleVertex<[u8; 4], StepVertex>>::buffer_layout(location)),
-
-        // Signed 8-bit integer
-        "Sint8" => Ok(<SimpleVertex<i8, StepVertex>>::buffer_layout(location)),
-        "Sint8x2" => Ok(<SimpleVertex<[i8; 2], StepVertex>>::buffer_layout(location)),
-        "Sint8x4" => Ok(<SimpleVertex<[i8; 4], StepVertex>>::buffer_layout(location)),
-
-        // Normalized unsigned 8-bit
-        "Unorm8x2" => Ok(<SimpleVertex<[Unorm8; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Unorm8x4" => Ok(<SimpleVertex<[Unorm8; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized signed 8-bit
-        "Snorm8x2" => Ok(<SimpleVertex<[Snorm8; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Snorm8x4" => Ok(<SimpleVertex<[Snorm8; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 16-bit integer
-        "Uint16" => Ok(<SimpleVertex<u16, StepVertex>>::buffer_layout(location)),
-        "Uint16x2" => Ok(<SimpleVertex<[u16; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Uint16x4" => Ok(<SimpleVertex<[u16; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Signed 16-bit integer
-        "Sint16" => Ok(<SimpleVertex<i16, StepVertex>>::buffer_layout(location)),
-        "Sint16x2" => Ok(<SimpleVertex<[i16; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Sint16x4" => Ok(<SimpleVertex<[i16; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized unsigned 16-bit
-        "Unorm16x2" => Ok(<SimpleVertex<[Unorm16; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Unorm16x4" => Ok(<SimpleVertex<[Unorm16; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized signed 16-bit
-        "Snorm16x2" => Ok(<SimpleVertex<[Snorm16; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Snorm16x4" => Ok(<SimpleVertex<[Snorm16; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 32-bit integer
-        "Uint32" => Ok(<SimpleVertex<u32, StepVertex>>::buffer_layout(location)),
-        "Uint32x2" => Ok(<SimpleVertex<[u32; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Uint32x3" => Ok(<SimpleVertex<[u32; 3], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Uint32x4" => Ok(<SimpleVertex<[u32; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-
-        // Signed 32-bit integer
-        "Sint32" => Ok(<SimpleVertex<i32, StepVertex>>::buffer_layout(location)),
-        "Sint32x2" => Ok(<SimpleVertex<[i32; 2], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Sint32x3" => Ok(<SimpleVertex<[i32; 3], StepVertex>>::buffer_layout(
-            location,
-        )),
-        "Sint32x4" => Ok(<SimpleVertex<[i32; 4], StepVertex>>::buffer_layout(
-            location,
-        )),
-        _ => {
-            #[cfg(feature = "custom_vertex")]
-            return Ok(REGISTRY.lock().map_err(|_| anyhow::anyhow!("x_x :: tried to access poisoned or locked vertex registry when loading material (this will only be your fault, ostinato never uses the vertex registry)"))?
-                    .get(name).ok_or(anyhow::anyhow!("x_x :: unregistered vertex type when loading material: {}", name))?());
-            #[cfg(not(feature = "custom_vertex"))]
-            return Err(anyhow!(
-                "x_x :: invalid vertex type when loading material: {}",
-                name
-            ));
-        }
-    }
-}
-pub fn instance_from_name(name: &str, location: u32) -> anyhow::Result<BufferLayout> {
-    match name {
-        "Instance" => Ok(InstanceRaw::buffer_layout(location)),
-        //
-        // Float formats
-
-        // Float formats
-        "Float32x2" => Ok(<SimpleVertex<[f32; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Float32x3" => Ok(<SimpleVertex<[f32; 3], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Float32x4" => Ok(<SimpleVertex<[f32; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 8-bit integer
-        "Uint8" => Ok(<SimpleVertex<u8, StepInstance>>::buffer_layout(location)),
-        "Uint8x2" => Ok(<SimpleVertex<[u8; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Uint8x4" => Ok(<SimpleVertex<[u8; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Signed 8-bit integer
-        "Sint8" => Ok(<SimpleVertex<i8, StepInstance>>::buffer_layout(location)),
-        "Sint8x2" => Ok(<SimpleVertex<[i8; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Sint8x4" => Ok(<SimpleVertex<[i8; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized unsigned 8-bit
-        "Unorm8x2" => Ok(<SimpleVertex<[Unorm8; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Unorm8x4" => Ok(<SimpleVertex<[Unorm8; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized signed 8-bit
-        "Snorm8x2" => Ok(<SimpleVertex<[Snorm8; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Snorm8x4" => Ok(<SimpleVertex<[Snorm8; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 16-bit integer
-        "Uint16" => Ok(<SimpleVertex<u16, StepInstance>>::buffer_layout(location)),
-        "Uint16x2" => Ok(<SimpleVertex<[u16; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Uint16x4" => Ok(<SimpleVertex<[u16; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Signed 16-bit integer
-        "Sint16" => Ok(<SimpleVertex<i16, StepInstance>>::buffer_layout(location)),
-        "Sint16x2" => Ok(<SimpleVertex<[i16; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Sint16x4" => Ok(<SimpleVertex<[i16; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized unsigned 16-bit
-        "Unorm16x2" => Ok(<SimpleVertex<[Unorm16; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Unorm16x4" => Ok(<SimpleVertex<[Unorm16; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Normalized signed 16-bit
-        "Snorm16x2" => Ok(<SimpleVertex<[Snorm16; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Snorm16x4" => Ok(<SimpleVertex<[Snorm16; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Unsigned 32-bit integer
-        "Uint32" => Ok(<SimpleVertex<u32, StepInstance>>::buffer_layout(location)),
-        "Uint32x2" => Ok(<SimpleVertex<[u32; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Uint32x3" => Ok(<SimpleVertex<[u32; 3], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Uint32x4" => Ok(<SimpleVertex<[u32; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-
-        // Signed 32-bit integer
-        "Sint32" => Ok(<SimpleVertex<i32, StepInstance>>::buffer_layout(location)),
-        "Sint32x2" => Ok(<SimpleVertex<[i32; 2], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Sint32x3" => Ok(<SimpleVertex<[i32; 3], StepInstance>>::buffer_layout(
-            location,
-        )),
-        "Sint32x4" => Ok(<SimpleVertex<[i32; 4], StepInstance>>::buffer_layout(
-            location,
-        )),
-        _ => {
-            #[cfg(feature = "custom_vertex")]
-            return Ok(REGISTRY.lock().map_err(|_| anyhow::anyhow!("x_x :: tried to access poisoned or locked vertex registry when loading material (this will only be your fault, ostinato never uses the vertex registry)"))?
-                    .get(name).ok_or(anyhow::anyhow!("x_x :: unregistered vertex type when loading material: {}", name))?());
-            #[cfg(not(feature = "custom_vertex"))]
-            return Err(anyhow!(
-                "x_x :: invalid vertex type when loading material: {}",
-                name
-            ));
-        }
-    }
-}
-
+/// TODO: proc macro - remove 3 consts, make it one VertexBufferLayout const and then make a derive
+/// for compatible structs
 pub trait VertexBuffer: bytemuck::Pod + bytemuck::Zeroable + 'static {
-    const STRIDE: u32;
+    // const STRIDE: u32;
     const STEP_MODE: wgpu::VertexStepMode = wgpu::VertexStepMode::Vertex;
-    fn buffer_layout(location: u32) -> BufferLayout {
-        BufferLayout {
-            attrs: Self::attrs(location),
-            stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: Self::STEP_MODE,
-        }
-    }
-    //fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_>;
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute>;
+    const STRIDE: wgpu::BufferAddress = std::mem::size_of::<Self>() as wgpu::BufferAddress;
+    const ATTRS: &'static [wgpu::VertexAttribute];
+}
+pub trait BufferLayout {
+    const DESC: wgpu::VertexBufferLayout<'static>;
+}
+impl<T: VertexBuffer> BufferLayout for T {
+    const DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::STRIDE,
+        step_mode: Self::STEP_MODE,
+        attributes: Self::ATTRS,
+    };
 }
 
 #[repr(C)]
@@ -290,23 +295,18 @@ pub struct ColorVertex {
 }
 
 impl VertexBuffer for ColorVertex {
-    const STRIDE: u32 = 2;
-    // fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
-    //     use std::mem;
-    //     wgpu::VertexBufferLayout {
-    //         array_stride: mem::size_of::<ColorVertex>() as wgpu::BufferAddress,
-    //         step_mode: wgpu::VertexStepMode::Vertex,
-    //         attributes: vertex_attrs,
-    //     }
-    // }
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute> {
-        wgpu::vertex_attr_array![
-            location => Float32x3,
-            location + 1 => Float32x2
-        ]
-        .to_vec()
-    }
+    const ATTRS: &'static [wgpu::VertexAttribute] = &vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x4
+    ];
 }
+
+// const fn attrs(location: u32) -> &'static [wgpu::VertexAttribute] {
+//     &wgpu::vertex_attr_array![
+//         0 => Float32x3,
+//         1 => Float32x2
+//     ]
+// }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -316,7 +316,6 @@ pub struct TextureVertex {
 }
 
 impl VertexBuffer for TextureVertex {
-    const STRIDE: u32 = 2;
     // fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
     //     use std::mem;
     //     wgpu::VertexBufferLayout {
@@ -325,13 +324,10 @@ impl VertexBuffer for TextureVertex {
     //         attributes: vertex_attrs,
     //     }
     // }
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute> {
-        vertex_attr_array![
-            location => Float32x3,
-            location + 1 => Float32x2
-        ]
-        .to_vec()
-    }
+    const ATTRS: &'static [wgpu::VertexAttribute] = &vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x2
+    ];
 }
 
 #[repr(C)]
@@ -343,8 +339,7 @@ pub struct ModelVertex {
 }
 
 impl VertexBuffer for ModelVertex {
-    const STRIDE: u32 = 3;
-    // fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+    // fn desc(location: u32) -> wgpu::VertexBufferLayout<'_> {
     //     use std::mem;
     //     wgpu::VertexBufferLayout {
     //         array_stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
@@ -352,14 +347,12 @@ impl VertexBuffer for ModelVertex {
     //         attributes: vertex_attrs,
     //     }
     // }
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute> {
-        vertex_attr_array![
-            location => Float32x3,
-            location + 1 => Float32x2,
-            location + 2 => Float32x3
-        ]
-        .to_vec()
-    }
+
+    const ATTRS: &'static [wgpu::VertexAttribute] = &vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x2,
+        2 => Float32x3
+    ];
 }
 
 #[repr(transparent)]
@@ -370,7 +363,6 @@ pub struct SimpleVertex<T: VertexCompatible, SM: StepMode>(pub T, std::marker::P
 }*/
 
 impl<T: VertexCompatible, SM: StepMode> VertexBuffer for SimpleVertex<T, SM> {
-    const STRIDE: u32 = 1;
     const STEP_MODE: wgpu::VertexStepMode = SM::STEP_MODE;
     // fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
     //     use std::mem;
@@ -380,13 +372,11 @@ impl<T: VertexCompatible, SM: StepMode> VertexBuffer for SimpleVertex<T, SM> {
     //         attributes: vertex_attrs,
     //     }
     // }
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute> {
-        vec![wgpu::VertexAttribute {
-            offset: 0,
-            shader_location: location + 0,
-            format: T::FORMAT,
-        }]
-    }
+    const ATTRS: &'static [wgpu::VertexAttribute] = &[wgpu::VertexAttribute {
+        offset: 0,
+        shader_location: 0,
+        format: T::FORMAT,
+    }];
 }
 
 impl<SM: StepMode> From<TextureVertex> for SimpleVertex<[f32; 3], SM> {

@@ -11,7 +11,10 @@ use ostinato::{
     camera::light::LightUniform,
     prelude::*,
     renderer::Renderable,
-    resources::{ModelVertex, SimpleVertex, StepInstance, StorageMesh, VertexBuffer, new_cube},
+    resources::{
+        ModelVertex, SimpleVertex, StepInstance, StorageMesh, VertexBuffer, new_cube,
+        pipeline::{BlinnPhong, LazyMaterial},
+    },
 };
 use wgpu::{
     BindGroup, Buffer, BufferUsages, PrimitiveState,
@@ -22,17 +25,6 @@ fn main() {
     ostinato::run::<ExampleHandler>().unwrap();
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Material {
-    ambient: [f32; 3],
-    _pad0: f32,
-    diffuse: [f32; 3],
-    _pad1: f32,
-    specular: [f32; 3],
-    shininess: f32,
-}
-
 /// example handler. not for outside use.
 /// full namespace paths so it doesnt clutter this file
 /// so much for above LOLW LOLW LOLW LOWL LOLW LOLW LOLW
@@ -41,8 +33,8 @@ pub struct ExampleHandler {
     camera: ostinato::camera::Camera,
     camera_controller: ostinato::camera::CameraController,
     cube: Mesh<ModelVertex>,
-    wireframe: StorageMesh,
-    clickbait: Clickbait,
+    // wireframe: StorageMesh,
+    // clickbait: Clickbait,
     lights: Vec<LightUniform>,
 }
 
@@ -50,23 +42,20 @@ impl AppHandler for ExampleHandler {
     async fn new(context: &mut Context) -> anyhow::Result<Self> {
         context.set_resource_directory(r"/Users/edwardlenzner/code/ostinato/res".to_owned());
         //j tjhis
-        let renderer = &mut context.renderer;
+        // let renderer = &mut context.renderer;
 
-        let lights = vec![LightUniform {
-            position: [1., 1., 1.],
+        let lights = vec![LightUniform::new([1., 1., 1.], [1., 1., 1.], 0.5)];
+        let light_buffer =
+            context
+                .renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Lgiht buf"),
+                    contents: bytemuck::cast_slice(&lights),
+                    usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                });
+        BlinnPhong::get(context).resources[0].as_inner_buffer;
 
-            _pad0: 0.,
-            color: [1., 1., 1.],
-            intensity: 0.5,
-        }];
-        let light_buffer = renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Lgiht buf"),
-                contents: bytemuck::cast_slice(&lights),
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            });
-        renderer.shader_resources.insert("lights", light_buffer);
         let material = Material {
             diffuse: [0., 1., 0.],
             _pad0: 0.,

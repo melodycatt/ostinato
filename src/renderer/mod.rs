@@ -1,5 +1,5 @@
 use glam::Mat4;
-use std::{ops::Range, sync::Arc, time::Instant};
+use std::{any::TypeId, collections::HashMap, ops::Range, sync::Arc, time::Instant};
 use wgpu::{
     BindGroup, BufferDescriptor, CommandEncoder, Features, RenderPass, SurfaceError,
     SurfaceTexture, util::DeviceExt,
@@ -7,8 +7,12 @@ use wgpu::{
 use winit::window::Window;
 
 use crate::{
+    Context,
     camera::{Camera, CameraUniform},
-    resources::{BindingResource, Material, ResourceCollection, ResourceId, Texture, VertexBuffer},
+    resources::{
+        BindingResource, Material, ResourceCollection, ResourceId, Texture, VertexBuffer,
+        pipeline::{MaterialData, PassData},
+    },
 };
 
 pub type EntryLayoutGenerator = fn(u32) -> wgpu::BindGroupLayoutEntry;
@@ -31,6 +35,9 @@ pub struct Renderer {
     /// shared bindgroups so that you dont have to go through the process of remaking them every damn time
     /// not sure if this has a performance difference but i think so?
     pub shared_bindings: ResourceCollection<(BindingResource, EntryLayoutGenerator)>,
+
+    pub material_types: HashMap<TypeId, MaterialData>,
+    pub passes: HashMap<TypeId, PassData>,
 }
 
 #[repr(C)]
@@ -131,6 +138,8 @@ impl Renderer {
             shader_resources: ResourceCollection::new(),
             materials: ResourceCollection::new(),
             shared_bindings,
+            material_types: HashMap::new(),
+            passes: HashMap::new(),
         })
     }
 
@@ -285,7 +294,6 @@ pub struct InstanceRaw {
     _pad2: f32,
 }
 impl VertexBuffer for InstanceRaw {
-    const STRIDE: u32 = 7;
     const STEP_MODE: wgpu::VertexStepMode = wgpu::VertexStepMode::Instance;
     // fn desc(vertex_attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
     //     use std::mem;
@@ -298,65 +306,55 @@ impl VertexBuffer for InstanceRaw {
     //         attributes: vertex_attrs,
     //     }
     // }
-    fn attrs(location: u32) -> Vec<wgpu::VertexAttribute> {
-        use std::mem;
-        [
-            wgpu::VertexAttribute {
-                offset: 0,
-                shader_location: location,
-                format: wgpu::VertexFormat::Float32x4,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                shader_location: location + 1,
-                format: wgpu::VertexFormat::Float32x4,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                shader_location: location + 2,
-                format: wgpu::VertexFormat::Float32x4,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                shader_location: location + 3,
-                format: wgpu::VertexFormat::Float32x4,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
-                shader_location: location + 4,
-                format: wgpu::VertexFormat::Float32x3,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 20]>() as wgpu::BufferAddress,
-                shader_location: location + 5,
-                format: wgpu::VertexFormat::Float32x3,
-            },
-            wgpu::VertexAttribute {
-                offset: mem::size_of::<[f32; 24]>() as wgpu::BufferAddress,
-                shader_location: location + 6,
-                format: wgpu::VertexFormat::Float32x3,
-            },
-        ]
-        .to_vec()
-    }
+    const ATTRS: &'static [wgpu::VertexAttribute] = &[
+        wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+            shader_location: 1,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+            shader_location: 2,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+            shader_location: 3,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+            shader_location: 4,
+            format: wgpu::VertexFormat::Float32x3,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 20]>() as wgpu::BufferAddress,
+            shader_location: 5,
+            format: wgpu::VertexFormat::Float32x3,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 24]>() as wgpu::BufferAddress,
+            shader_location: 6,
+            format: wgpu::VertexFormat::Float32x3,
+        },
+    ];
 }
 
 pub trait Renderable {
     /// draw all instances possible
-    fn draw(
-        &self,
-        pass: &mut RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(pass, manual_bindings, 0..1, renderer)
+    fn draw(&self, pass: &mut RenderPass, context: &mut Context) -> anyhow::Result<()> {
+        self.draw_instances(pass, 0..1, context)
     }
     /// draw a range of instances
     fn draw_instances(
         &self,
         pass: &mut RenderPass,
-        manual_bindings: &[BindGroup],
         instances: Range<u32>,
-        renderer: &mut Renderer,
+        context: &mut Context,
     ) -> anyhow::Result<()>;
 }

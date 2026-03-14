@@ -1,192 +1,3 @@
-/*struct Interner {
-    map: HashMap<String, usize>,
-    id: usize,
-    free: Vec<usize>,
-}
-impl Interner {
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-            id: 0,
-            free: Vec::new(),
-        }
-    }
-    pub fn intern(&mut self, s: &str) -> usize {
-        if let Some(&id) = self.map.get(s) {
-            return id;
-        }
-        let id = if !self.free.is_empty() {
-            self.free.pop().unwrap()
-        } else {
-            self.id += 1;
-            self.id - 1
-        };
-        self.map.insert(s.to_owned(), id);
-        id
-    }
-    pub fn remove(&mut self, s: &str) -> anyhow::Result<()> {
-        let id = self
-            .map
-            .remove(s)
-            .ok_or(anyhow::Error::msg("x_x :: removed uninterned string"))?;
-        self.free.push(id);
-        Ok(())
-    }
-}
-
-// TODO make a wrapper for the usize so that we can implement &str::into::<index>()
-/// a kind of vec used to make stuff faster than a hashmap
-/// i wanted to be able to register resources like `Material`s and `BindingResource`s with string ids
-/// without the overhead of a hashmap
-/// so this interns strings as indices for you to store and then index into `resources` later on
-/// this might be a stupid implementation but whatever
-pub struct ResourceCollection<T: 'static> {
-    interner: Interner,
-    pub resources: Vec<Option<T>>,
-}
-impl<T: 'static> Default for ResourceCollection<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// TODO: make an error type for this
-impl<T: 'static> ResourceCollection<T> {
-    pub fn new() -> Self {
-        Self {
-            interner: Interner::new(),
-            resources: Vec::new(),
-        }
-    }
-
-    pub fn insert(&mut self, key: &str, value: T) -> usize {
-        let id = self.interner.intern(key);
-
-        if id >= self.resources.len() {
-            self.resources.resize_with(id + 1, || None);
-        }
-        dbg!(key, id);
-        self.resources[id] = Some(value);
-
-        id
-    }
-
-    /// returns index or creates one if it doesnt exist
-    pub fn index(&mut self, key: &str) -> usize {
-        dbg!(key);
-        self.interner.intern(key)
-    }
-    /// returns index if it exists
-    pub fn index_of(&self, key: &str) -> anyhow::Result<usize> {
-        self.interner.map.get(key).map(|x| *x).ok_or(anyhow!(
-            "x_x :: tried to get index_of uninterned key in a resourcecollection"
-        ))
-    }
-
-    /// unsafely marks an item as removed
-    ///
-    /// # Safety
-    /// this function does not actually erase the value from memory, it just marks the index as empty to be overwritten
-    /// you can still access the value behind `key` via its index (but not the string key), but it may be changed at any time
-    /// which is why this function is unsafe
-    pub unsafe fn remove(&mut self, key: &str) -> anyhow::Result<()> {
-        self.interner.remove(key)
-    }
-
-    pub fn get(&self, index: usize) -> anyhow::Result<&T> {
-        if self.resources.len() <= index {
-            return Err(anyhow!(
-                "x_x :: tried to get resource collection item greater that collection len!"
-            ));
-        }
-        dbg!(index);
-        self.resources[index]
-            .as_ref()
-            .with_context(|| "x_x :: tried to get uninitialized resource collection item")
-    }
-    pub fn get_mut(&mut self, index: usize) -> anyhow::Result<&mut T> {
-        if self.resources.len() <= index {
-            return Err(anyhow!(
-                "x_x :: tried to get_mut resource collection item greater that collection len!"
-            ));
-        }
-        Ok(self.resources[index]
-            .as_mut()
-            .expect("x_x :: tried to get uninitialized resource collection item"))
-    }
-    pub fn entry(&mut self, index: usize) -> ResourceEntry<'_, T> {
-        ResourceEntry {
-            id: index,
-            collection: self,
-        }
-    }
-}
-
-impl ResourceCollection<Box<dyn BindingResource>> {
-    pub fn downcast_ref<U: 'static>(&self, index: usize) -> anyhow::Result<&U> where {
-        let resource = self.get(index).unwrap();
-        let any = resource.as_ref() as &dyn Any;
-
-        any.downcast_ref::<U>()
-            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"))
-    }
-    pub fn downcast_mut<U: 'static>(&mut self, index: usize) -> anyhow::Result<&mut U> {
-        let resource = self.get_mut(index).unwrap();
-        let any = resource.as_mut() as &mut dyn Any;
-
-        any.downcast_mut::<U>()
-            .ok_or(anyhow!("x_x :: incorrectly downcasted resource"))
-    }
-}
-
-pub struct ResourceEntry<'a, T: 'static> {
-    id: usize,
-    collection: &'a mut ResourceCollection<T>,
-}
-
-impl<'a, T: 'static> ResourceEntry<'a, T> {
-    pub fn exists(&self) -> bool {
-        self.id < self.collection.resources.len()
-    }
-
-    /// Inserts created value if missing, using the closure.
-    /// If the slot already exists returns &mut existing.
-    pub fn or_insert_with<F: FnOnce() -> T>(self, f: F) -> &'a mut T {
-        let id = self.id;
-        let coll = self.collection;
-
-        if id >= coll.resources.len() {
-            coll.resources.resize_with(id + 1, || None);
-            coll.resources[id] = Some(f());
-        }
-        coll.resources[id].as_mut().unwrap()
-    }
-
-    /// Get mutable reference if already present — None if absent.
-    pub fn get_mut(self) -> Option<&'a mut T> {
-        if self.id < self.collection.resources.len() {
-            Some(
-                self.collection.resources[self.id]
-                    .as_mut()
-                    .expect("x_x :: tried to get uninitialized resources item"),
-            )
-        } else {
-            None
-        }
-    }
-    pub fn get(self) -> Option<&'a T> {
-        if self.id < self.collection.resources.len() {
-            Some(
-                self.collection.resources[self.id]
-                    .as_ref()
-                    .expect("x_x :: tried to get uninitialized resources item"),
-            )
-        } else {
-            None
-        }
-    }
-}*/
-
 use std::collections::HashMap;
 use std::ops::Index;
 
@@ -200,7 +11,6 @@ pub struct ResourceCollection<T> {
     dense_ids: Vec<usize>,
     sparse: Vec<SparseEntry>,
 
-    // Allocated ONLY if string keys are used
     keys: HashMap<String, usize>,
 }
 
@@ -359,7 +169,177 @@ impl<T> Index<usize> for ResourceCollection<T> {
             .expect("tried to get dead or non-existent resource")
     }
 }
+use bytemuck::Pod;
+use std::mem::size_of;
+use wgpu::util::DeviceExt;
 
+pub struct StorageVec {
+    pub buffer: wgpu::Buffer,
+    pub len: u32,
+    pub capacity: u32,
+    pub align: u32,
+}
+
+impl StorageVec {
+    pub fn new<T: Pod>(device: &wgpu::Device, usage: wgpu::BufferUsages, initial: &[T]) -> Self {
+        let align = size_of::<T>() as u32;
+        assert!(align > 0, "Element size must be > 0");
+
+        let capacity = initial.len().max(1) as u32;
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(initial),
+            usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        });
+
+        Self {
+            buffer,
+            len: initial.len() as u32,
+            capacity,
+            align,
+        }
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, new_capacity: u32) {
+        let new_size = new_capacity as u64 * self.align as u64;
+
+        let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: new_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("storage_vec_resize"),
+        });
+
+        encoder.copy_buffer_to_buffer(
+            &self.buffer,
+            0,
+            &new_buffer,
+            0,
+            self.len as u64 * self.align as u64,
+        );
+
+        queue.submit(Some(encoder.finish()));
+
+        self.buffer = new_buffer;
+        self.capacity = new_capacity;
+    }
+
+    pub fn push<T: Pod>(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, value: &T) {
+        assert_eq!(
+            size_of::<T>() as u32,
+            self.align,
+            "StorageVec element size mismatch"
+        );
+
+        assert_eq!(
+            size_of::<T>() as u32,
+            self.align,
+            "StorageVec element size mismatch"
+        );
+
+        if self.len == self.capacity {
+            let new_capacity = (self.capacity.max(1)) * 2;
+            self.resize(device, queue, new_capacity);
+        }
+
+        let offset = self.len as u64 * self.align as u64;
+
+        queue.write_buffer(&self.buffer, offset, bytemuck::bytes_of(value));
+
+        self.len += 1;
+    }
+
+    pub fn insert<T: Pod>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        index: u32,
+        value: &T,
+    ) {
+        assert!(index <= self.len, "Index out of bounds");
+        assert_eq!(
+            size_of::<T>() as u32,
+            self.align,
+            "StorageVec element size mismatch"
+        );
+
+        // resize if necessary
+        if self.len == self.capacity {
+            let new_capacity = (self.capacity.max(1)) * 2;
+            self.resize(device, queue, new_capacity);
+        }
+
+        let elem_size = self.align as u64;
+        let offset = index as u64 * elem_size;
+        let move_bytes = (self.len - index) as u64 * elem_size;
+
+        if move_bytes > 0 {
+            // shift existing elements up
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("storage_vec_insert"),
+            });
+
+            encoder.copy_buffer_to_buffer(
+                &self.buffer,
+                offset,
+                &self.buffer,
+                offset + elem_size,
+                move_bytes,
+            );
+
+            queue.submit(Some(encoder.finish()));
+        }
+
+        // write the new element
+        queue.write_buffer(&self.buffer, offset, bytemuck::bytes_of(value));
+
+        self.len += 1;
+    }
+
+    pub fn extend<T: Pod>(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, values: &[T]) {
+        assert_eq!(
+            size_of::<T>() as u32,
+            self.align,
+            "StorageVec element size mismatch"
+        );
+
+        let required = self.len + values.len() as u32;
+
+        if required > self.capacity {
+            let mut new_capacity = self.capacity.max(1);
+            while new_capacity < required {
+                new_capacity *= 2;
+            }
+
+            self.resize(device, queue, new_capacity);
+        }
+
+        let offset = self.len as u64 * self.align as u64;
+
+        queue.write_buffer(&self.buffer, offset, bytemuck::cast_slice(values));
+
+        self.len += values.len() as u32;
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    pub fn byte_len(&self) -> u64 {
+        self.len as u64 * self.align as u64
+    }
+
+    pub fn byte_capacity(&self) -> u64 {
+        self.capacity as u64 * self.align as u64
+    }
+}
 // TODO: sampler and texture arrays
 pub enum BindingResource {
     Buffer(wgpu::Buffer),
@@ -367,6 +347,7 @@ pub enum BindingResource {
     Texture(texture::Texture),
     AccelerationStructure(wgpu::Tlas),
     ExternalTexture(wgpu::ExternalTexture),
+    StorageVec(StorageVec),
 }
 impl BindingResource {
     pub fn binding(&self) -> wgpu::BindingResource<'_> {
@@ -383,6 +364,7 @@ impl BindingResource {
             ),
             Self::AccelerationStructure(a) => a.as_binding(),
             Self::ExternalTexture(e) => wgpu::BindingResource::ExternalTexture(e),
+            Self::StorageVec(s) => s.buffer.as_entire_binding(),
         }
     }
 
@@ -418,5 +400,10 @@ impl From<wgpu::Tlas> for BindingResource {
 impl From<wgpu::ExternalTexture> for BindingResource {
     fn from(val: wgpu::ExternalTexture) -> Self {
         BindingResource::ExternalTexture(val)
+    }
+}
+impl From<StorageVec> for BindingResource {
+    fn from(val: StorageVec) -> Self {
+        BindingResource::StorageVec(val)
     }
 }
