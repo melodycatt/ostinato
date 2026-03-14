@@ -8,14 +8,14 @@ use crate::{
     resources::{InstancedMesh, VertexBuffer},
 };
 
-pub struct ParticleEmitter<V: VertexBuffer<N> + Debug, const N: usize> {
+pub struct ParticleEmitter<V: VertexBuffer + Debug> {
     pub mesh: InstancedMesh<V>,
     particles: Vec<Particle>,
     pub config: EmitterConfig,
     pub position: Vec3,
     spawn_timer: f32,
 }
-impl<V: VertexBuffer<N> + Debug, const N: usize> ParticleEmitter<V, N> {
+impl<V: VertexBuffer + Debug> ParticleEmitter<V> {
     pub fn new(mesh: InstancedMesh<V>, config: EmitterConfig, position: Vec3) -> Self {
         Self {
             mesh,

@@ -5,7 +5,7 @@
 mod app;
 pub mod camera;
 pub mod input;
-pub mod particle;
+// pub mod particle;
 pub mod renderer;
 pub mod resources;
 pub use app::*;
@@ -14,7 +14,7 @@ pub use wgpu;
 // TODO remove this
 pub use bytemuck;
 use std::{any::TypeId, iter, sync::Arc, time::Instant};
-use wgpu::{RenderPass, RenderPipeline};
+use wgpu::RenderPass;
 
 // TODO: make this customizable
 pub const WIDTH: u32 = 1000;
@@ -30,7 +30,7 @@ use winit::{
 use crate::{
     input::{keyboard::KeyboardData, mouse::MouseData},
     renderer::Renderer,
-    resources::pipeline::{MaterialType, SharedBindGroup},
+    resources::pipeline::{MaterialData, PassData},
 };
 
 // TODO: didnt know where to put this.
@@ -65,16 +65,6 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn get_material_type_mut<T: MaterialType>(
-        &mut self,
-    ) -> &mut (SharedBindGroup, RenderPipeline) {
-        let pipeline = T::pipeline(self);
-        let bg = SharedBindGroup::from_generator::<T>(&mut self.renderer);
-        self.renderer
-            .material_types
-            .entry(TypeId::of::<T>())
-            .or_insert((bg, pipeline))
-    }
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         Ok(Self {
             renderer: Renderer::new(window).await?,
@@ -188,6 +178,31 @@ impl Context {
     /*pub fn set_camera(&mut self, camera: &Camera) {
         self.renderer.shared_bind_groups.
     }*/
+    /// maybe make public and mut version?
+    pub(crate) fn get_material_data<T: crate::resources::pipeline::MaterialType>(
+        &mut self,
+    ) -> &mut MaterialData {
+        let id = TypeId::of::<T>();
+
+        if !self.renderer.material_types.contains_key(&id) {
+            let material_data = MaterialData::of::<T>(self);
+            self.renderer.material_types.insert(id, material_data);
+        }
+
+        self.renderer.material_types.get_mut(&id).unwrap()
+    }
+    pub(crate) fn get_pass_data<T: crate::resources::pipeline::RenderPass>(
+        &mut self,
+    ) -> &mut PassData {
+        let id = TypeId::of::<T>();
+
+        if !self.renderer.passes.contains_key(&id) {
+            let pass = PassData::of::<T>(self);
+            self.renderer.passes.insert(id, pass);
+        }
+
+        self.renderer.passes.get_mut(&id).unwrap()
+    }
 }
 
 pub trait AppHandler: Sized {
@@ -212,7 +227,7 @@ pub mod prelude {
     pub use crate::{
         AppHandler, Context, camera,
         renderer::{Instance, Renderable, Renderer},
-        resources::{Mesh, load_material, load_model},
+        resources::Mesh,
     };
     pub use glam;
     pub use wgpu;

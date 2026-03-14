@@ -17,23 +17,21 @@ impl<V: VertexBuffer + Debug> Renderable for Model<V> {
     fn draw(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut crate::prelude::Renderer,
+        context: &mut crate::prelude::Context,
     ) -> anyhow::Result<()> {
         for i in self.meshes.iter() {
-            i.draw(pass, manual_bindings, renderer)?
+            i.draw(pass, context)?
         }
         Ok(())
     }
     fn draw_instances(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
         instances: std::ops::Range<u32>,
-        renderer: &mut crate::prelude::Renderer,
+        context: &mut crate::prelude::Context,
     ) -> anyhow::Result<()> {
         for i in self.meshes.iter() {
-            i.draw_instances(pass, manual_bindings, instances.clone(), renderer)?
+            i.draw_instances(pass, instances.clone(), context)?
         }
         Ok(())
     }

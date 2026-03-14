@@ -7,6 +7,7 @@ use wgpu::{
 };
 
 use crate::{
+    Context,
     prelude::{Instance, Mesh, Renderable, Renderer},
     resources::{SimpleVertex, StepVertex, VertexBuffer},
 };
@@ -249,46 +250,27 @@ impl StorageMesh {
 }
 
 impl Renderable for StorageMesh {
-    fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(pass, manual_bindings, 0..1, renderer)
-    }
     fn draw_instances(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
         instances: Range<u32>,
-        renderer: &mut Renderer,
+        context: &mut Context,
     ) -> anyhow::Result<()> {
-        let m = renderer
-            .materials
-            .get(self.material)
-            .ok_or(anyhow!("x_x :: todo write this panic message"))?;
-        pass.set_pipeline(&m.render_pipeline);
-
-        let mut manual_i = 0;
-        for i in 0..m.bind_groups.len() {
-            if i == 1 {
-                pass.set_bind_group(1, &self.bind_group, &[]);
-                continue;
-            }
-            let b = &m.bind_groups[i];
-            if b.is_some() {
-                pass.set_bind_group(i as u32, b, &[]);
-            } else {
-                pass.set_bind_group(i as u32, Some(&manual_bindings[manual_i]), &[]);
-                manual_i += 1;
-            }
-        }
-        pass.set_bind_group(1, &self.bind_group, &[]);
-        pass.set_immediates(112, bytemuck::cast_slice(&[self.color]));
-        pass.set_immediates(0, bytemuck::cast_slice(&[self.transform.to_raw()]));
-        //println!("drawing 0..{}", self.num_elements);
-        pass.draw(0..self.num_elements, instances);
-        Ok(())
+        // TODO:
+        // let m = BlinnPhong::get(context);
+        //
+        // pass.set_pipeline(&m.pipeline);
+        // pass.set_bind_group(1, Some(&m.bind_group), &[]);
+        // pass.set_immediates(0, bytemuck::bytes_of(&self.transform.to_raw()));
+        // self.material.prerender(pass);
+        // let p = GeometryPass::get(context);
+        // pass.set_bind_group(0, Some(&p.bind_group), &[]);
+        // pass.set_bind_group(1, &self.bind_group, &[]);
+        // pass.set_immediates(112, bytemuck::cast_slice(&[self.color]));
+        // pass.set_immediates(0, bytemuck::cast_slice(&[self.transform.to_raw()]));
+        // //println!("drawing 0..{}", self.num_elements);
+        // pass.draw(0..self.num_elements, instances);
+        // Ok(())
+        todo!()
     }
 }

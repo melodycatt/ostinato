@@ -1,4 +1,5 @@
 mod model;
+pub mod new;
 mod vertex;
 mod wireframe;
 use anyhow::anyhow;
@@ -11,7 +12,9 @@ use std::ops::Range;
 use std::{fmt::Debug, marker::PhantomData};
 use wgpu::{Device, Queue, util::DeviceExt};
 
+use crate::Context;
 use crate::resources::ResourceId;
+use crate::resources::pipeline::MaterialType;
 use crate::{Renderer, renderer::Instance, renderer::Renderable};
 
 /// a mesh for renderingi
@@ -382,43 +385,36 @@ pub fn new_cube(
 }
 
 impl<V: VertexBuffer + Debug> Renderable for Mesh<V> {
-    fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(pass, manual_bindings, 0..1, renderer)
-    }
     fn draw_instances(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
         instances: Range<u32>,
-        renderer: &mut Renderer,
+        context: &mut Context,
     ) -> anyhow::Result<()> {
-        let m = renderer
-            .materials
-            .get(self.material)
-            .ok_or(anyhow!("x_x :: todo write this panic message"))?;
-        pass.set_pipeline(&m.render_pipeline);
-
-        let mut manual_i = 0;
-        for i in 0..m.bind_groups.len() {
-            let b = &m.bind_groups[i];
-            if b.is_some() {
-                pass.set_bind_group(i as u32, b, &[]);
-            } else {
-                pass.set_bind_group(i as u32, Some(&manual_bindings[manual_i]), &[]);
-                manual_i += 1;
-            }
-        }
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_immediates(0, bytemuck::cast_slice(&[self.transform.to_raw()]));
-        //println!("drawing 0..{}", self.num_elements);
-        pass.draw_indexed(0..self.num_elements, 0, instances);
-        Ok(())
+        todo!()
+        // let m = context
+        //     .renderer
+        //     .materials
+        //     .get(self.material)
+        //     .ok_or(anyhow!("x_x :: todo write this panic message"))?;
+        // pass.set_pipeline(&m.render_pipeline);
+        //
+        // let mut manual_i = 0;
+        // for i in 0..m.bind_groups.len() {
+        //     let b = &m.bind_groups[i];
+        //     if b.is_some() {
+        //         pass.set_bind_group(i as u32, b, &[]);
+        //     } else {
+        //         pass.set_bind_group(i as u32, Some(&manual_bindings[manual_i]), &[]);
+        //         manual_i += 1;
+        //     }
+        // }
+        // pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        // pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        // pass.set_immediates(0, bytemuck::cast_slice(&[self.transform.to_raw()]));
+        // //println!("drawing 0..{}", self.num_elements);
+        // pass.draw_indexed(0..self.num_elements, 0, instances);
+        // Ok(())
     }
 }
 
@@ -437,47 +433,37 @@ impl<V: VertexBuffer + Debug> InstancedMesh<V> {
 }
 
 impl<V: VertexBuffer + Debug> Renderable for InstancedMesh<V> {
-    fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(
-            pass,
-            manual_bindings,
-            0..self.instances.instances.len() as u32,
-            renderer,
-        )
+    fn draw(&self, pass: &mut wgpu::RenderPass, context: &mut Context) -> anyhow::Result<()> {
+        self.draw_instances(pass, 0..self.instances.instances.len() as u32, context)
     }
     fn draw_instances(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
         instances: Range<u32>,
-        renderer: &mut Renderer,
+        context: &mut Context,
     ) -> anyhow::Result<()> {
-        let m = renderer
-            .materials
-            .get(self.mesh.material)
-            .ok_or(anyhow!("x_x :: todo write this panic message"))?;
-        pass.set_pipeline(&m.render_pipeline);
-
-        let mut manual_i = 0;
-        for i in 0..m.bind_groups.len() {
-            let b = &m.bind_groups[i];
-            if b.is_some() {
-                pass.set_bind_group(i as u32, b, &[]);
-            } else {
-                pass.set_bind_group(i as u32, Some(&manual_bindings[manual_i]), &[]);
-                manual_i += 1;
-            }
-        }
-        pass.set_vertex_buffer(0, self.mesh.vertex_buffer.slice(..));
-        pass.set_index_buffer(self.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_vertex_buffer(1, self.instances.buffer.slice(..));
-        //println!("drawing 0..{}", self.num_elements);
-        pass.draw_indexed(0..self.mesh.num_elements, 0, instances);
-        Ok(())
+        todo!()
+        // let m = renderer
+        //     .materials
+        //     .get(self.mesh.material)
+        //     .ok_or(anyhow!("x_x :: todo write this panic message"))?;
+        // pass.set_pipeline(&m.render_pipeline);
+        //
+        // let mut manual_i = 0;
+        // for i in 0..m.bind_groups.len() {
+        //     let b = &m.bind_groups[i];
+        //     if b.is_some() {
+        //         pass.set_bind_group(i as u32, b, &[]);
+        //     } else {
+        //         pass.set_bind_group(i as u32, Some(&manual_bindings[manual_i]), &[]);
+        //         manual_i += 1;
+        //     }
+        // }
+        // pass.set_vertex_buffer(0, self.mesh.vertex_buffer.slice(..));
+        // pass.set_index_buffer(self.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        // pass.set_vertex_buffer(1, self.instances.buffer.slice(..));
+        // //println!("drawing 0..{}", self.num_elements);
+        // pass.draw_indexed(0..self.mesh.num_elements, 0, instances);
+        // Ok(())
     }
 }

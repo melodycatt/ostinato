@@ -276,17 +276,15 @@ pub trait VertexBuffer: bytemuck::Pod + bytemuck::Zeroable + 'static {
     const STRIDE: wgpu::BufferAddress = std::mem::size_of::<Self>() as wgpu::BufferAddress;
     const ATTRS: &'static [wgpu::VertexAttribute];
 }
-pub const trait BufferLayout {
-    fn desc() -> wgpu::VertexBufferLayout<'static>;
+pub trait BufferLayout {
+    const DESC: wgpu::VertexBufferLayout<'static>;
 }
-impl<T: VertexBuffer> const BufferLayout for T {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: Self::STRIDE,
-            step_mode: Self::STEP_MODE,
-            attributes: Self::ATTRS,
-        }
-    }
+impl<T: VertexBuffer> BufferLayout for T {
+    const DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::STRIDE,
+        step_mode: Self::STEP_MODE,
+        attributes: Self::ATTRS,
+    };
 }
 
 #[repr(C)]

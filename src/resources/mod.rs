@@ -26,7 +26,7 @@ pub use material::*;
 pub use mesh::*;
 pub use texture::*;
 
-use crate::prelude::Instance;
+use crate::{prelude::Instance, resources::pipeline::ShaderConfig};
 
 // TODO remove wasm
 #[cfg(target_arch = "wasm32")]
@@ -65,13 +65,16 @@ pub async fn load_string(file_name: &str, path: &Option<String>) -> anyhow::Resu
     Ok(txt)
 }
 /// blocks
-pub fn load_shader(file_name: &str, context: &mut crate::Context) -> anyhow::Result<ShaderModule> {
+pub fn load_shader(
+    shader_path: &'static str,
+    context: &mut crate::Context,
+) -> anyhow::Result<ShaderModule> {
     let vert_text = pollster::block_on(crate::resources::load_string(
-        file_name,
+        shader_path,
         &context.resources_path,
     ))?;
     let vert_descriptor = wgpu::ShaderModuleDescriptor {
-        label: Some(file_name),
+        label: Some(shader_path),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&vert_text)),
     };
     Ok(context
@@ -79,6 +82,20 @@ pub fn load_shader(file_name: &str, context: &mut crate::Context) -> anyhow::Res
         .device
         .create_shader_module(vert_descriptor))
 }
+// pub fn load_vertex_module(
+//     cfg: ShaderConfig,
+//     buffers: &[VertexBufferLayout<'_>],
+//     context: &mut crate::Context,
+// ) -> anyhow::Result<VertexState<'_>> {
+//     let module = &load_shader(cfg.shader_path, context)?;
+//     let vstate = VertexState {
+//         module,
+//         entry_point: cfg.entry_point,
+//         compilation_options: cfg.compilation_options,
+//         buffers,
+//     };
+//     Ok(vstate)
+// }
 /// load to binary with `file_name` appended to res path
 pub async fn load_binary(file_name: &str, path: &Option<String>) -> anyhow::Result<Vec<u8>> {
     #[cfg(target_arch = "wasm32")]
@@ -153,7 +170,7 @@ macro_rules! unwrap_yaml {
         ))?
     };
 }
-
+/*
 /// load a material from an .omi file
 ///
 /// if `resource_name` is omitted `file_name` is used to store the shader in the context.renderer;
@@ -193,7 +210,6 @@ pub async fn load_material(
 
     Ok(id)
 }
-
 /// such a pain to write AND badly done. the ultimate combination
 /// idk why this is public but use it at your own discretion!
 pub async fn load_omi(
@@ -934,4 +950,4 @@ async fn binding_type(entry: &Value, context: &mut crate::Context) -> anyhow::Re
             ));
         }
     })
-}
+}*/
