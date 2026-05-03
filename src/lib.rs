@@ -1,30 +1,37 @@
 mod app;
 pub mod camera;
 pub mod input;
-pub mod particle;
+pub mod mesh;
 pub mod renderer;
 pub mod resources;
+use anyhow::Result;
 pub use app::*;
-pub use glam;
-pub use wgpu;
+// pub use glam;
+// pub use wgpu;
 // TODO remove this
-pub use bytemuck;
-use std::{iter, sync::Arc, time::Instant};
-use wgpu::RenderPass;
+// pub use bytemuck;
+use std::{
+    iter,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use wgpu::{RenderPass, RenderPipeline};
 
 // TODO: make this customizable
 pub const WIDTH: u32 = 1000;
 pub const HEIGHT: u32 = 1000;
 
 use winit::{
+    dpi::{PhysicalSize, Size},
     event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{KeyCode, PhysicalKey},
-    window::Window,
+    window::{Window, WindowAttributes},
 };
 
 use crate::{
     input::{keyboard::KeyboardData, mouse::MouseData},
+    prelude::post_pipeline,
     renderer::Renderer,
 };
 
@@ -40,40 +47,35 @@ pub struct Context {
     /// stored resource indices for speed
     /// will often be pre-set seeing as i know the order of my own default resources
     /// sorry, its magic numbers - i lowkey think theyre fun sometimes
-    resource_indices: [usize; 1],
     pub(crate) resources_path: Option<String>,
-
-    delta_instant: Instant,
-    /// time between frames, in seconds
-    pub delta: f64,
-    /// init time
-    pub start: Instant,
 
     /// mouse input information
     pub mouse: MouseData,
     /// keyboard input information
     pub keyboard: KeyboardData,
 
+    nothing_shader: Option<RenderPipeline>,
+
+    // last_frame: Instant,
     #[cfg(feature = "rapier3d")]
     /// rapier3d physics context
     pub rapier: rapier::RapierContext<(), ()>,
 }
 
+const FPS: Duration = Duration::from_millis(1000 / 60);
+
 impl Context {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         Ok(Self {
+            nothing_shader: None,
             renderer: Renderer::new(window).await?,
             // in order:
             // time buffer
-            resource_indices: [0],
-            start: Instant::now(),
-            delta_instant: Instant::now(),
-            delta: 0.,
             resources_path: None,
 
             mouse: MouseData::new(true),
             keyboard: KeyboardData::new(),
-
+            // last_frame: Instant::now(),
             #[cfg(feature = "rapier3d")]
             rapier: rapier::RapierContext::new((), ()),
         })
@@ -84,26 +86,32 @@ impl Context {
     }
 
     async fn init(&mut self) -> anyhow::Result<()> {
-        self.start = Instant::now();
-        self.delta_instant = Instant::now();
-        self.renderer.init().await?;
+        self.renderer.start = Instant::now();
+        self.renderer.delta_instant = Instant::now();
+        // self.renderer.init().await?;
         Ok(())
     }
 
     /// once before every fram
     fn update<T: AppHandler>(&mut self, handler: &mut T) -> anyhow::Result<()> {
-        self.delta = self.delta_instant.elapsed().as_secs_f64();
-        self.delta_instant = Instant::now();
-
-        let time_buffer = self
-            .renderer
-            .get_shared_resource(self.resource_indices[0])
-            .as_inner_buffer();
+        self.renderer.delta = self.renderer.delta_instant.elapsed().as_secs_f64();
+        // println!("{}", self.renderer.delta);
+        self.renderer.delta_instant = Instant::now();
         self.renderer.queue.write_buffer(
-            time_buffer,
+            &self.renderer.post_uniform.0,
             0,
-            bytemuck::cast_slice(&[self.start.elapsed().as_secs_f32()]),
+            bytemuck::bytes_of(&self.renderer.start.elapsed().as_secs_f32()),
         );
+        //
+        // let time_buffer = self
+        //     .renderer
+        //     .get_shared_resource(self.resource_indices[0])
+        //     .as_inner_buffer();
+        // self.renderer.queue.write_buffer(
+        //     time_buffer,
+        //     0,
+        //     bytemuck::cast_slice(&[self.start.elapsed().as_secs_f32()]),
+        // );
 
         handler.update(self)?;
 
@@ -122,12 +130,19 @@ impl Context {
             return Ok(());
         }
         let mut encoder = self.renderer.command_encoder();
-        let (tex, mut pass) = self.renderer.render_pass(&mut encoder)?;
+        let mut pass = self.renderer.render_pass(&mut encoder)?;
 
         // let the user render
         handler.render(self, &mut pass)?;
 
         // pass borrows encoder which conflicts with encoder. should just use a scope but im silly 😝
+        drop(pass);
+        self.renderer.queue.submit(iter::once(encoder.finish()));
+        let mut encoder = self.renderer.command_encoder();
+        let (tex, mut pass) = self.renderer.post_pass(&mut encoder)?;
+        pass.set_bind_group(0, Some(&self.renderer.post_uniform.2), &[]);
+        pass.set_bind_group(1, Some(&self.renderer.scene_bind_group.1), &[]);
+        handler.post_process(self, &mut pass)?;
         drop(pass);
         self.renderer.queue.submit(iter::once(encoder.finish()));
         tex.present();
@@ -153,10 +168,7 @@ impl Context {
             ..
         } = event
         {
-            self.renderer.window.set_cursor_visible(true);
-            self.renderer
-                .window
-                .set_cursor_grab(winit::window::CursorGrabMode::None)?;
+            input::mouse::lock_and_hide_cursor(false, self);
         }
         Ok(())
     }
@@ -170,6 +182,23 @@ impl Context {
         self.mouse.device_event(event_loop, device_id, &event);
     }
 
+    pub fn pass_post_processing(
+        &mut self,
+        pass: &mut RenderPass,
+    ) -> anyhow::Result<(), wgpu::SurfaceError> {
+        if self.nothing_shader.is_none() {
+            self.nothing_shader = Some(post_pipeline(
+                "core_shaders/post_processing/nothing.wgsl",
+                0,
+                self,
+            ));
+        }
+        let shader = self.nothing_shader.as_ref().unwrap();
+        pass.set_pipeline(shader);
+        pass.draw(0..3, 0..1);
+        Ok(())
+    }
+
     /*pub fn set_camera(&mut self, camera: &Camera) {
         self.renderer.shared_bind_groups.
     }*/
@@ -177,7 +206,7 @@ impl Context {
 
 pub trait AppHandler: Sized {
     #[allow(async_fn_in_trait)]
-    async fn new(context: &mut Context) -> anyhow::Result<Self>;
+    async fn new(context: &mut Context) -> Result<Self>;
 
     /// called once every frame. you are given one `RenderPass`
     /// if you want another, contribute to the library and make `Context` a trait so you can make custom event loops
@@ -186,19 +215,36 @@ pub trait AppHandler: Sized {
         &mut self,
         context: &mut Context,
         pass: &mut RenderPass<'_>,
-    ) -> anyhow::Result<(), wgpu::SurfaceError>;
+    ) -> Result<(), wgpu::SurfaceError>;
     /// called once before `render`
-    fn update(&mut self, context: &mut Context) -> anyhow::Result<()>;
+    fn update(&mut self, context: &mut Context) -> Result<()>;
     // called when the app is started, since you dont have `context` properly initialised until then
     //fn init(&mut self, context: &mut Context) -> impl std::future::Future<Output = anyhow::Result<()>>;
+    /// id imagine this is called right after rendering aga
+    fn post_process(
+        &mut self,
+        context: &mut Context,
+        pass: &mut RenderPass<'_>,
+    ) -> Result<(), wgpu::SurfaceError>;
+
+    fn window_attributes() -> WindowAttributes {
+        WindowAttributes::default().with_inner_size(Size::Physical(PhysicalSize {
+            width: WIDTH,
+            height: HEIGHT,
+        }))
+    }
 }
 
 pub mod prelude {
     pub use crate::{
         AppHandler, Context, camera,
-        renderer::{Instance, Renderable, Renderer},
-        resources::{Mesh, load_material, load_model},
+        mesh::{self, Mesh, vertex},
+        renderer::{Instance, Renderable, Renderer, post_pipeline},
+        resources::{load_model, load_pipeline},
     };
+    // TODO: dont do this.
+    pub use anyhow::Result;
+    pub use bytemuck;
     pub use glam;
     pub use wgpu;
     pub use winit;

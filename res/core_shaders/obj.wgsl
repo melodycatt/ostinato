@@ -55,6 +55,14 @@ var<immediate> immediates: Immediates; // SIZE: 64
 var<uniform> camera: CameraUniform;
 @group(1) @binding(0)
 var<storage, read> lights: array<Light>;
+@group(2) @binding(0)
+var texture: texture_2d<f32>;
+@group(2) @binding(1)
+var tex_sampler: sampler;
+@group(2) @binding(2)
+var roughness: texture_2d<f32>;
+@group(2) @binding(3)
+var rough_sampler: sampler;
 
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
@@ -81,6 +89,9 @@ fn vs_main(model: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(texture, tex_sampler, in.tex_coords);
+    let roughness = textureSample(roughness, rough_sampler, in.tex_coords).r;
+    let shininess = 100/(500 * roughness + 0.01);
     let material = immediates.material;
     let N = normalize(in.normal);
     let V = normalize(camera.view_pos.xyz - in.world_pos);
@@ -110,12 +121,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         var spec: f32 = 0.0;
         if (diff > 0.0) {
-            spec = pow(max(dot(N, H), 0.0), material.shininess);
+            spec = pow(max(dot(N, H), 0.0), shininess);
         }
         let specular = material.specular * spec * light.color * light.intensity;
 
         result += (diffuse + specular) * attenuation;
     }
 
-    return vec4<f32>(result, 1.0);
+    return vec4<f32>(tex_color.rgb * result, tex_color.a);
+    //return vec4<f32>(1.0, 1.0, 1.0, 1.0);
 }

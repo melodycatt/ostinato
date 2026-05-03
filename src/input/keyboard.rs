@@ -27,11 +27,13 @@ impl KeyboardData {
     pub fn is_pressed(&self, key: KeyCode) -> bool {
         self.pressed.contains(&PhysicalKey::Code(key))
     }
-    pub fn just_pressed(&self, key: PhysicalKey) -> bool {
+    pub fn just_pressed(&self, key: KeyCode) -> bool {
+        let key = PhysicalKey::Code(key);
         //println!("AAAA {key:?} {} {}", self.pressed.contains(&key), self.prev_pressed.contains(&key));
         self.pressed.contains(&key) && !self.prev_pressed.contains(&key)
     }
-    pub fn just_released(&self, key: PhysicalKey) -> bool {
+    pub fn just_released(&self, key: KeyCode) -> bool {
+        let key = PhysicalKey::Code(key);
         !self.pressed.contains(&key) && self.prev_pressed.contains(&key)
     }
 

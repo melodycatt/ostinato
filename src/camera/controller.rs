@@ -68,6 +68,19 @@ impl CameraController {
         mouse: &MouseData,
         keyboard: &KeyboardData,
     ) {
+        self.update_keyboard(camera, keyboard);
+        self.update_mouse(camera, mouse);
+    }
+
+    pub fn update_mouse(&mut self, camera: &mut Camera, mouse: &MouseData) {
+        self.yaw -= mouse.delta[0] as f32 * self.sens;
+        self.pitch -= mouse.delta[1] as f32 * self.sens;
+        self.pitch = self.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+        self.yaw %= 2.0 * PI;
+
+        camera.rotation = Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch);
+    }
+    pub fn update_keyboard(&mut self, camera: &mut Camera, keyboard: &KeyboardData) {
         //use cgmath::InnerSpace;
         //println!("{:?}", mouse.delta);
         if keyboard.is_pressed(KeyCode::KeyW) || keyboard.is_pressed(KeyCode::ArrowUp) {
@@ -116,12 +129,5 @@ impl CameraController {
                 z: 0.0,
             };
         }
-
-        self.yaw -= mouse.delta[0] as f32 * self.sens;
-        self.pitch -= mouse.delta[1] as f32 * self.sens;
-        self.pitch = self.pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
-        self.yaw %= 2.0 * PI;
-
-        camera.rotation = Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch);
     }
 }

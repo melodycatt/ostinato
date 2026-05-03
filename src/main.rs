@@ -1,36 +1,35 @@
 use std::{
     f32::consts::{PI, SQRT_2},
     fmt::Debug,
-    marker::PhantomData,
-    ops::Range,
 };
 
-use anyhow::anyhow;
 use ostinato::{
     AppHandler, Context,
     camera::light::LightUniform,
+    mesh::{
+        Model, ObjModel, StorageMesh, new_cube,
+        vertex::{ModelVertex, SimpleVertex, StepInstance, VertexBuffer},
+    },
     prelude::*,
-    renderer::Renderable,
-    resources::{ModelVertex, SimpleVertex, StepInstance, StorageMesh, VertexBuffer, new_cube},
+    resources::{
+        Texture,
+        blinn_phong::{Material, light_binding},
+        load_pipeline, load_texture,
+    },
 };
 use wgpu::{
-    BindGroup, Buffer, BufferUsages, PrimitiveState,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferUsages, PrimitiveState,
+    RenderPipeline,
     util::{BufferInitDescriptor, DeviceExt},
+};
+use winit::{
+    dpi::{PhysicalSize, Size},
+    platform::macos::WindowAttributesExtMacOS,
+    window::WindowAttributes,
 };
 
 fn main() {
     ostinato::run::<ExampleHandler>().unwrap();
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Material {
-    ambient: [f32; 3],
-    _pad0: f32,
-    diffuse: [f32; 3],
-    _pad1: f32,
-    specular: [f32; 3],
-    shininess: f32,
 }
 
 /// example handler. not for outside use.
@@ -44,21 +43,77 @@ pub struct ExampleHandler {
     wireframe: StorageMesh,
     clickbait: Clickbait,
     lights: Vec<LightUniform>,
+    light_binding: (Buffer, BindGroup),
+
+    pipelines: [RenderPipeline; 5],
+
+    skull: ObjModel,
 }
 
 impl AppHandler for ExampleHandler {
     async fn new(context: &mut Context) -> anyhow::Result<Self> {
         context.set_resource_directory(r"/Users/edwardlenzner/code/ostinato/res".to_owned());
         //j tjhis
+        let pipelines = [
+            // BLINNPHONG
+            load_pipeline("core_shaders/blinn_phong", context, None).await?,
+            // WIREFRAME
+            load_pipeline(
+                "core_shaders/wireframe",
+                context,
+                Some(PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    cull_mode: None,
+                    ..Default::default()
+                }),
+            )
+            .await?,
+            // CLICKBAIT
+            load_pipeline(
+                "core_shaders/clickbait",
+                context,
+                Some(PrimitiveState {
+                    cull_mode: None,
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                }),
+            )
+            .await?,
+            // DITHER
+            ostinato::renderer::post_pipeline(
+                "core_shaders/post_processing/white_dither.wgsl",
+                0,
+                context,
+            ),
+            //
+            // OBJ
+            load_pipeline("core_shaders/obj", context, None).await?,
+        ];
+
+        let mut skull = load_model("skull/human_skull", context).await?;
+        skull.meshes.pop();
+        let mut mat = Material {
+            ambient: [0.2; 3],
+            diffuse: [1.; 3],
+            specular: [1.; 3],
+            shininess: 25.,
+        };
+        skull.meshes[0].material = mat;
+        skull.meshes[2].material = mat;
+        mat.shininess = 49.;
+        skull.meshes[1].material = mat;
+        let transform = Instance {
+            position: glam::Vec3::new(-0.5, -0.5, -0.5),
+            pivot: glam::Vec3::new(0.5, 0.5, 0.5),
+            rotation: glam::Quat::IDENTITY,
+            scale: glam::Vec3::new(0.05, 0.05, 0.05),
+        };
+        skull.transform = transform;
+
         let renderer = &mut context.renderer;
 
-        let lights = vec![LightUniform {
-            position: [1., 1., 1.],
-
-            _pad0: 0.,
-            color: [1., 1., 1.],
-            intensity: 0.5,
-        }];
+        renderer.window().set_cursor_hittest(false).unwrap();
+        let lights = vec![LightUniform::new([-3., 5., 6.5], [1., 1., 1.], 30.)];
         let light_buffer = renderer
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -66,50 +121,27 @@ impl AppHandler for ExampleHandler {
                 contents: bytemuck::cast_slice(&lights),
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             });
-        renderer.shader_resources.insert("lights", light_buffer);
+        let light_bg = light_binding(&renderer.device, &light_buffer);
+
+        // renderer.shader_resources.insert("lights", light_buffer);
         let material = Material {
             diffuse: [0., 1., 0.],
-            _pad0: 0.,
             ambient: [0., 0.1, 0.],
-            _pad1: 0.,
             specular: [0., 1., 0.],
             shininess: 64.,
         };
-        let material_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("mat buf"),
-                    contents: bytemuck::cast_slice(&[material]),
-                    usage: BufferUsages::UNIFORM,
-                });
-        renderer
-            .shader_resources
-            .insert("cube_material", material_buffer);
 
         let camera = ostinato::camera::Camera::new(
             ostinato::camera::CameraConfig {
-                eye: (0.0, 0.0, 3.0).into(),
-                rotation: glam::Quat::IDENTITY,
-                fovy: 60.0,
+                eye: (0.0, -0.2, 6.0).into(),
+                rotation: glam::Quat::from_rotation_y(0.) * glam::Quat::from_rotation_x(0.),
+                fovy: 32.2,
                 znear: 0.01,
                 zfar: 1000.0,
             },
             renderer.config.width as f32 / renderer.config.height as f32,
             &renderer.device,
         );
-
-        let _ = load_material(
-            "core_shaders/blinn_phong",
-            context,
-            Some("core_shaders/blinn_phong"),
-            Some(PrimitiveState {
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                ..Default::default()
-            }),
-        )
-        .await?;
 
         let cube = new_cube(
             Instance {
@@ -118,22 +150,13 @@ impl AppHandler for ExampleHandler {
                 rotation: glam::Quat::IDENTITY,
                 scale: glam::Vec3::new(1., 1., 1.),
             },
-            "core_shaders/blinn_phong",
+            material,
             &mut context.renderer,
         );
-        let mut wireframe = StorageMesh::from_mesh(cube.clone(), &context.renderer.device)?;
-        wireframe.material = load_material(
-            "core_shaders/wireframe",
-            context,
-            None,
-            Some(PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                ..Default::default()
-            }),
-        )
-        .await?;
+        let wireframe = StorageMesh::from_mesh(cube.clone(), &context.renderer.device)?;
+
         let clickbait = Clickbait::from_mesh(&cube, context).await?;
+
         //wireframe.transform.scale = glam::Vec3::new(1.2, 1.2, 1.2);
         //wireframe.transform.rotation = glam::Quat::from_rotation_y(PI);
 
@@ -146,6 +169,24 @@ impl AppHandler for ExampleHandler {
             clickbait,
             lights,
             camera_controller: ostinato::camera::CameraController::new(0.15, 1.),
+            light_binding: (light_buffer, light_bg),
+            pipelines,
+            skull: ObjModel::from_model(
+                skull,
+                &[
+                    [
+                        "skull/Skull_Jaw_BaseColor.png",
+                        "skull/Skull_Jaw_Roughness.png",
+                    ],
+                    ["skull/Teeth_BaseColor.png", "skull/Teeth_Roughness.png"],
+                    [
+                        "skull/Skull_Top_BaseColor.png",
+                        "skull/Skull_Top_Roughness.png",
+                    ],
+                ],
+                context,
+            )
+            .await?,
         })
     }
     fn render(
@@ -153,51 +194,82 @@ impl AppHandler for ExampleHandler {
         context: &mut Context,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> anyhow::Result<(), wgpu::SurfaceError> {
-        // TODO this looks like boilerplate!!!!!! stupid!!!!!!!! lets change that
-        // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube.as_ref().unwrap()).expect("AAA");
-        // context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.cube2.as_ref().unwrap()).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[0]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[1]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[2]).expect("AAA");
-        //context.renderer.render_with_camera(pass, &mut self.camera.as_mut().unwrap(), &self.skull.as_ref().unwrap().meshes[3]).expect("AAA");
-        context.renderer.set_camera(&self.camera);
-        /*self.wireframe
-        .draw(pass, &[], &mut context.renderer)
-        .unwrap();*/
-        self.clickbait
-            .draw(pass, &[], &mut context.renderer)
-            .unwrap();
-        self.cube.draw(pass, &[], &mut context.renderer).unwrap();
+        pass.set_bind_group(0, Some(&self.camera.bind_group), &[]);
+
+        pass.set_pipeline(&self.pipelines[4]);
+        pass.set_bind_group(1, Some(&self.light_binding.1), &[]);
+        // pass.set_bind_group(2, Some(&self.jaw_bg), &[]);
+        // self.skull.meshes[0].draw(pass, &mut context.renderer);
+        // for i in 0..3 {
+        //     pass.set_bind_group(2, Some(&self.skull_bgs[i]), &[]);
+        //     self.skull.meshes[i].draw(pass, &mut context.renderer);
+        // }
+
+        self.skull.draw(pass, &mut context.renderer);
+        // pass.set_pipeline(&self.pipelines[0]);
+        // pass.set_bind_group(1, Some(&self.light_binding.1), &[]);
+        // self.cube.draw(pass, &mut context.renderer);
+        //
+        // pass.set_pipeline(&self.pipelines[1]);
+        // self.wireframe.draw(pass, &mut context.renderer);
+        // pass.set_pipeline(&self.pipelines[2]);
+        // self.clickbait.draw(pass, &mut context.renderer);
+
         Ok(())
     }
     fn update(&mut self, context: &mut Context) -> anyhow::Result<()> {
-        //dbg!(self.camera_controller.pitch, self.camera_controller.yaw);
-        self.camera_controller
-            .update_camera(&mut self.camera, &context.mouse, &context.keyboard);
+        if context
+            .keyboard
+            .just_pressed(winit::keyboard::KeyCode::KeyD)
+        {
+            let boo = !context.renderer.window().is_decorated();
+            context.renderer.window().set_decorations(boo);
+            context.renderer.window().set_cursor_hittest(boo).unwrap();
+        }
+        // dbg!(self.lights[0].position);
+        // self.camera_controller
+        //     .update_keyboard(&mut self.camera, &context.keyboard);
+        // self.camera_controller
+        //     .update_camera(&mut self.camera, &context.mouse, &context.keyboard);
         // maybe bundle these two lines into a Camera method that takes `&mut self, renderer: &mut Renderer`
-        self.camera.uniform.update_view_proj(self.camera.config());
+        // self.camera.uniform.update_view_proj(self.camera.config());
         context.renderer.queue.write_buffer(
             &self.camera.buffer,
             0,
             bytemuck::cast_slice(&[self.camera.uniform]),
         );
-        let elapsed = context.start.elapsed().as_secs_f32();
-        self.lights[0].position = [SQRT_2 * elapsed.cos(), 1., SQRT_2 * elapsed.sin()];
-        context.renderer.queue.write_buffer(
-            context
-                .renderer
-                .shader_resources
-                .get("lights")
-                .unwrap()
-                .as_inner_buffer(),
-            0,
-            bytemuck::cast_slice(&self.lights),
-        );
+        let elapsed = context.renderer.start.elapsed().as_secs_f32();
+        // self.lights[0].position = [5. * SQRT_2 * elapsed.cos(), 5., 5. * SQRT_2 * elapsed.sin()];
+        // context.renderer.queue.write_buffer(
+        //     &self.light_binding.0,
+        //     0,
+        //     bytemuck::cast_slice(&self.lights),
+        // );
+        self.skull.transform.rotation = glam::Quat::from_rotation_y(elapsed * PI);
         self.cube.transform.rotation = glam::Quat::from_rotation_y(elapsed * PI);
         self.wireframe.transform.rotation = self.cube.transform.rotation;
         self.clickbait.transform = self.cube.transform;
         //self.emitter.update(context)?;
         Ok(())
+    }
+    fn post_process(
+        &mut self,
+        ctx: &mut Context,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> anyhow::Result<(), wgpu::SurfaceError> {
+        // pass.set_pipeline(&self.pipelines[3]);
+        // pass.draw(0..3, 0..1);
+        ctx.pass_post_processing(pass)
+    }
+
+    fn window_attributes() -> winit::window::WindowAttributes {
+        WindowAttributes::default()
+            .with_transparent(true)
+            .with_active(true)
+            .with_decorations(false)
+            .with_has_shadow(false)
+            .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
+            .with_inner_size(PhysicalSize::new(500, 500))
     }
 }
 
@@ -206,7 +278,6 @@ struct Clickbait {
     instance_buffer: Buffer,
     index_buffer: Buffer,
     num_elements: u32,
-    material: usize,
     transform: Instance,
 }
 
@@ -255,50 +326,25 @@ impl Clickbait {
             instance_buffer,
             index_buffer,
             num_elements: mesh.vertices.len() as u32,
-            material: load_material(
-                "core_shaders/clickbait",
-                context,
-                None,
-                Some(PrimitiveState {
-                    cull_mode: None,
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                }),
-            )
-            .await?,
             transform: mesh.transform,
         })
     }
 }
 
 impl Renderable for Clickbait {
-    fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(pass, manual_bindings, 0..self.num_elements, renderer)
+    fn draw(&self, pass: &mut wgpu::RenderPass, renderer: &mut Renderer) {
+        self.draw_instances(pass, 0..self.num_elements, renderer);
     }
     fn draw_instances(
         &self,
         pass: &mut wgpu::RenderPass,
-        manual_bindings: &[BindGroup],
-        instances: Range<u32>,
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        let m = renderer
-            .materials
-            .get(self.material)
-            .ok_or(anyhow!("x_x :: todo write this panic message"))?;
-        pass.set_pipeline(&m.render_pipeline);
-        pass.set_bind_group(0, m.bind_groups[0].as_ref(), &[]);
+        instances: std::ops::Range<u32>,
+        _: &mut Renderer,
+    ) {
+        pass.set_immediates(0, bytemuck::cast_slice(&[self.transform.to_raw()]));
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
         pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_immediates(0, bytemuck::bytes_of(&self.transform.to_raw()));
-        //println!("drawing 0..{}", self.num_elements);
         pass.draw(0..4, instances);
-        Ok(())
     }
 }

@@ -55,6 +55,10 @@ var<immediate> immediates: Immediates; // SIZE: 64
 var<uniform> camera: CameraUniform;
 @group(1) @binding(0)
 var<storage, read> lights: array<Light>;
+@group(2) @binding(0)
+var texture: texture_2d<f32>;
+@group(2) @binding(0)
+var tex_sampler: sampler;
 
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
@@ -81,6 +85,7 @@ fn vs_main(model: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(texture, tex_sampler, in.tex_coords);
     let material = immediates.material;
     let N = normalize(in.normal);
     let V = normalize(camera.view_pos.xyz - in.world_pos);
@@ -117,5 +122,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         result += (diffuse + specular) * attenuation;
     }
 
-    return vec4<f32>(result, 1.0);
+    return vec4<f32>(tex_color.rgb * result, tex_color.a);
 }

@@ -1,15 +1,13 @@
 use glam::Mat4;
-use std::{ops::Range, sync::Arc, time::Instant};
-use wgpu::{
-    BindGroup, BufferDescriptor, CommandEncoder, Features, RenderPass, SurfaceError,
-    SurfaceTexture, util::DeviceExt,
-};
+use std::time::Instant;
+use std::{ops::Range, sync::Arc};
+use wgpu::util::DeviceExt;
+use wgpu::{CommandEncoder, Features, RenderPass, SurfaceError, SurfaceTexture};
 use winit::window::Window;
 
-use crate::{
-    camera::{Camera, CameraUniform},
-    resources::{BindingResource, Material, ResourceCollection, ResourceId, Texture, VertexBuffer},
-};
+use crate::Context;
+use crate::mesh::vertex::VertexBuffer;
+use crate::resources::{Texture, load_shader};
 
 pub type EntryLayoutGenerator = fn(u32) -> wgpu::BindGroupLayoutEntry;
 /// the rendering context and everything that handles it
@@ -22,24 +20,29 @@ pub struct Renderer {
     pub(crate) is_surface_configured: bool,
     pub(crate) depth_texture: Texture,
     pub(crate) window: Arc<Window>,
+    pub(crate) scene_texture: Texture,
 
-    /// shader resources for bind groups such as buffers
-    /// use the `downcast_ref` and `downcast_mut` methods for these
-    pub shader_resources: ResourceCollection<BindingResource>,
-    /// NOT SHADERS!!! MATERIALS!!! im a bot
-    pub materials: ResourceCollection<Material>,
-    /// shared bindgroups so that you dont have to go through the process of remaking them every damn time
-    /// not sure if this has a performance difference but i think so?
-    pub shared_bindings: ResourceCollection<(BindingResource, EntryLayoutGenerator)>,
+    pub(crate) delta_instant: Instant,
+    /// time between frames, in seconds
+    pub delta: f64,
+    /// init time
+    pub start: Instant,
+    pub post_uniform: (wgpu::Buffer, wgpu::BindGroupLayout, wgpu::BindGroup),
+    pub(crate) scene_bind_group: (wgpu::BindGroupLayout, wgpu::BindGroup),
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ResolutionUniform {
+pub struct PostUniform {
+    time: f32,
+    _pad: f32,
     res: [f32; 2],
 }
 
 impl Renderer {
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
     /// dont worry :)
     pub(crate) async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         let size = window.inner_size();
@@ -47,8 +50,6 @@ impl Renderer {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
-            #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::GL,
             ..Default::default()
         });
 
@@ -79,46 +80,112 @@ impl Renderer {
             .await
             .unwrap();
 
-        let surface_caps = surface.get_capabilities(&adapter);
-
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
+        // let surface_caps = surface.get_capabilities(&adapter);
+        //
+        // let surface_format = surface_caps
+        //     .formats
+        //     .iter()
+        //     .copied()
+        //     .find(|f| f.is_srgb())
+        //     .unwrap_or(surface_caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
+            format: wgpu::TextureFormat::Bgra8Unorm,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: surface_caps.alpha_modes[0],
+            alpha_mode: wgpu::CompositeAlphaMode::PostMultiplied,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        window.set_cursor_visible(false);
-        window.set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
-
+        window.set_visible(true);
+        window.focus_window();
         let depth_texture =
             Texture::create_depth_texture(&device, (config.width, config.height), "depth_texture");
 
-        let camera_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("shared camera buffer"),
-            size: std::mem::size_of::<CameraUniform>() as u64,
-            mapped_at_creation: false,
-            usage: wgpu::BufferUsages::COPY_DST.union(wgpu::BufferUsages::UNIFORM),
+        let scene_texture = Texture::create_render_texture(&device, &config);
+        let scene_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("post texture bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::all(),
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::all(),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
         });
-        let mut shared_bindings = ResourceCollection::new();
-        // TODO: i guess turn this into a function
-        shared_bindings.insert(
-            "CAMERA",
-            (
-                camera_buffer.into(),
-                CameraUniform::binding_generator as EntryLayoutGenerator,
-            ),
-        );
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post texture bg"),
+            layout: &scene_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&scene_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&scene_texture.sampler),
+                },
+            ],
+        });
+
+        let post_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("post uniform buffer"),
+            contents: bytemuck::bytes_of(&PostUniform {
+                time: 0.,
+                _pad: 0.,
+                res: [size.width as f32, size.height as f32],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let post_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("post uniform bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::all(),
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let post_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post uniform bg"),
+            layout: &post_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: post_buf.as_entire_binding(),
+            }],
+        });
+        // let camera_buffer = device.create_buffer(&BufferDescriptor {
+        //     label: Some("shared camera buffer"),
+        //     size: std::mem::size_of::<CameraUniform>() as u64,
+        //     mapped_at_creation: false,
+        //     usage: wgpu::BufferUsages::COPY_DST.union(wgpu::BufferUsages::UNIFORM),
+        // });
+        // let mut shared_bindings = ResourceCollection::new();
+        // // TODO: i guess turn this into a function
+        // shared_bindings.insert(
+        //     "CAMERA",
+        //     (
+        //         camera_buffer.into(),
+        //         CameraUniform::binding_generator as EntryLayoutGenerator,
+        //     ),
+        // );
         // TODO: let user set initial cameraconfig (maybe)
         Ok(Self {
             surface,
@@ -128,33 +195,22 @@ impl Renderer {
             is_surface_configured: false,
             depth_texture,
             window,
-            shader_resources: ResourceCollection::new(),
-            materials: ResourceCollection::new(),
-            shared_bindings,
+            scene_texture,
+            scene_bind_group: (scene_bgl, scene_bind_group),
+
+            delta: 0.,
+            delta_instant: Instant::now(),
+            start: Instant::now(),
+            post_uniform: (post_buf, post_bgl, post_bg),
         })
     }
 
-    pub(crate) async fn init(&mut self) -> anyhow::Result<()> {
-        let time_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Time Buffer"),
-                contents: bytemuck::cast_slice(&[Instant::now().elapsed().as_secs_f32()]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-        let res = self.window.inner_size().cast::<f32>().into();
-        let res_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Resolution Buffer"),
-                contents: bytemuck::cast_slice(&[ResolutionUniform { res }]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+    // pub(crate) async fn init(&mut self) -> anyhow::Result<()> {
+    //     Ok(())
+    // }
 
-        self.shader_resources.insert("time", time_buffer);
-        self.shader_resources.insert("resolution", res_buffer);
-
-        Ok(())
+    pub fn res(&self) -> [f32; 2] {
+        self.window.inner_size().cast::<f32>().into()
     }
 
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
@@ -169,6 +225,23 @@ impl Renderer {
                 "depth_texture",
             );
             self.depth_texture = t;
+            let t = Texture::create_render_texture(&self.device, &self.config);
+            self.scene_texture = t;
+            let scene_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("post texture bg"),
+                layout: &self.scene_bind_group.0,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.scene_texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.scene_texture.sampler),
+                    },
+                ],
+            });
+            self.scene_bind_group.1 = scene_bind_group;
         }
     }
 
@@ -179,6 +252,45 @@ impl Renderer {
             })
     }
     pub fn render_pass<'b>(
+        &mut self,
+        encoder: &'b mut CommandEncoder,
+    ) -> anyhow::Result<wgpu::RenderPass<'b>, SurfaceError> {
+        // let surface_texture = self.surface.get_current_texture()?;
+        // let view = surface_texture
+        //     .texture
+        //     .create_view(&wgpu::TextureViewDescriptor::default());
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.scene_texture.view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.,
+                        g: 0.,
+                        b: 0.,
+                        a: 0.,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+            timestamp_writes: None,
+        });
+
+        Ok(pass)
+    }
+    pub fn post_pass<'b>(
         &mut self,
         encoder: &'b mut CommandEncoder,
     ) -> anyhow::Result<(SurfaceTexture, wgpu::RenderPass<'b>), SurfaceError> {
@@ -197,19 +309,12 @@ impl Renderer {
                         r: 0.,
                         g: 0.,
                         b: 0.,
-                        a: 1.,
+                        a: 0.,
                     }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: None,
             occlusion_query_set: None,
             multiview_mask: None,
             timestamp_writes: None,
@@ -217,30 +322,29 @@ impl Renderer {
 
         Ok((surface_texture, pass))
     }
+    // pub fn set_camera(&mut self, camera: &Camera) {
+    //     let buffer = self.get_shared_resource(0).as_inner_buffer();
+    //     let mut encoder = self
+    //         .device
+    //         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    //             label: Some("Vertex Buffer Copy Encoder"),
+    //         });
+    //     encoder.copy_buffer_to_buffer(
+    //         &camera.buffer,
+    //         0,
+    //         buffer,
+    //         0,
+    //         std::mem::size_of::<CameraUniform>() as u64,
+    //     );
+    //     self.queue.submit(std::iter::once(encoder.finish()));
+    // }
 
-    pub fn set_camera(&mut self, camera: &Camera) {
-        let buffer = self.get_shared_resource(0).as_inner_buffer();
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Vertex Buffer Copy Encoder"),
-            });
-        encoder.copy_buffer_to_buffer(
-            &camera.buffer,
-            0,
-            buffer,
-            0,
-            std::mem::size_of::<CameraUniform>() as u64,
-        );
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    pub fn get_shared_resource(&self, id: impl ResourceId) -> &BindingResource {
-        &self.shared_bindings.get(id).unwrap().0
-    }
-    pub fn get_shared_resource_mut(&mut self, id: impl ResourceId) -> &mut BindingResource {
-        &mut self.shared_bindings.get_mut(id).unwrap().0
-    }
+    // pub fn get_shared_resource(&self, id: impl ResourceId) -> &BindingResource {
+    //     &self.shared_bindings.get(id).unwrap().0
+    // }
+    // pub fn get_shared_resource_mut(&mut self, id: impl ResourceId) -> &mut BindingResource {
+    //     &mut self.shared_bindings.get_mut(id).unwrap().0
+    // }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -270,6 +374,33 @@ impl Instance {
             normal2: normal[2],
             _pad2: 0.,
         }
+    }
+    pub fn to_mat4(&self) -> glam::Mat4 {
+        // Translate to position, apply pivot, then TRS, then unpivot
+        let t = glam::Mat4::from_translation(self.position);
+        let p = glam::Mat4::from_translation(self.pivot);
+        let ip = glam::Mat4::from_translation(-self.pivot);
+        let r = glam::Mat4::from_quat(self.rotation);
+        let s = glam::Mat4::from_scale(self.scale);
+
+        t * p * r * s * ip
+    }
+
+    pub fn from_mat4(m: glam::Mat4) -> Self {
+        let (scale, rotation, translation) = m.to_scale_rotation_translation();
+        Self {
+            position: translation,
+            rotation,
+            scale,
+            pivot: glam::Vec3::ZERO, // pivot is "baked in" after composition
+        }
+    }
+
+    /// Applies `other` after `self`
+    pub fn apply(&self, other: &Instance) -> Instance {
+        let m1 = self.to_mat4();
+        let m2 = other.to_mat4();
+        Instance::from_mat4(m2 * m1)
     }
 }
 // NEW!
@@ -343,20 +474,53 @@ impl VertexBuffer for InstanceRaw {
 
 pub trait Renderable {
     /// draw all instances possible
-    fn draw(
-        &self,
-        pass: &mut RenderPass,
-        manual_bindings: &[BindGroup],
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.draw_instances(pass, manual_bindings, 0..1, renderer)
+    fn draw(&self, pass: &mut RenderPass, renderer: &mut Renderer) {
+        self.draw_instances(pass, 0..1, renderer)
     }
     /// draw a range of instances
-    fn draw_instances(
-        &self,
-        pass: &mut RenderPass,
-        manual_bindings: &[BindGroup],
-        instances: Range<u32>,
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()>;
+    fn draw_instances(&self, pass: &mut RenderPass, instances: Range<u32>, renderer: &mut Renderer);
+}
+
+pub fn post_pipeline(
+    shader_path: &str,
+    immediate_size: u32,
+    context: &mut Context,
+) -> wgpu::RenderPipeline {
+    let device = context.renderer.device.clone();
+    let module = load_shader(shader_path, context).unwrap();
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("post pipeline layout"),
+        bind_group_layouts: &[
+            &context.renderer.post_uniform.1,
+            &context.renderer.scene_bind_group.0,
+        ],
+        immediate_size,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("post pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: None,
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: Default::default(),
+
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: None,
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: context.renderer.config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::all(),
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }

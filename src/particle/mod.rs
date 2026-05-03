@@ -4,7 +4,7 @@ use rand::distr::Distribution;
 
 use crate::{
     Context,
-    renderer::{Instance, Renderable, Renderer},
+    renderer::Instance,
     resources::{InstancedMesh, VertexBuffer},
 };
 
@@ -65,13 +65,6 @@ impl<V: VertexBuffer + Debug> ParticleEmitter<V> {
             .instances
             .update_buffer(&context.renderer.device, &context.renderer.queue);
         Ok(())
-    }
-    pub fn render(
-        &mut self,
-        pass: &mut wgpu::RenderPass<'_>,
-        renderer: &mut Renderer,
-    ) -> anyhow::Result<()> {
-        self.mesh.draw(pass, &[], renderer)
     }
 }
 

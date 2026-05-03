@@ -47,7 +47,7 @@ pub struct Camera {
 
     pub uniform: CameraUniform,
     pub buffer: wgpu::Buffer,
-    //    pub camera_controller: CameraController,
+    pub bind_group: wgpu::BindGroup, //    pub camera_controller: CameraController,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +105,18 @@ impl Camera {
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         });
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("camera"),
+            entries: &[CameraUniform::binding_generator(0)],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera"),
+            layout: &bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
 
         Self {
             eye: config.eye,
@@ -115,6 +127,7 @@ impl Camera {
             zfar: config.zfar,
             uniform: camera_uniform,
             buffer: camera_buffer,
+            bind_group,
         }
     }
     pub fn config(&self) -> CameraData {

@@ -6,6 +6,8 @@ use winit::{
     event_loop::ActiveEventLoop,
 };
 
+use crate::Context;
+
 #[derive(Clone, Debug)]
 pub struct MouseData {
     /// mouse delta over one frame, in pixels
@@ -137,3 +139,14 @@ impl MouseData {
     }
 }
 
+pub fn lock_and_hide_cursor(lock: bool, ctx: &mut Context) {
+    ctx.renderer.window.set_cursor_visible(!lock);
+    ctx.renderer
+        .window
+        .set_cursor_grab(if lock {
+            winit::window::CursorGrabMode::Locked
+        } else {
+            winit::window::CursorGrabMode::None
+        })
+        .unwrap();
+}

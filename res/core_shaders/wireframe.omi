@@ -5,11 +5,24 @@ entry_points:
   fragment:
     module: core_shaders/wireframe.wgsl
     function: fs_main
-shared_bind_groups:
-  - CAMERA
+
 bind_groups:
+  - label: "camera"
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+          - VERTEX
+          - COMPUTE
+          - MESH
+          - TASK
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
   - label: "vertex and index things"
-    manual: true
     entries:
       - binding: 0
         visibility: 

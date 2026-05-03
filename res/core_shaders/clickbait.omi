@@ -5,8 +5,22 @@ entry_points:
   fragment:
     module: core_shaders/clickbait.wgsl
     function: fs_main
-shared_bind_groups:
-  - CAMERA
+bind_groups:
+  - label: "camera"
+    entries:
+      - binding: 0
+        visibility: 
+          - FRAGMENT
+          - VERTEX
+          - COMPUTE
+          - MESH
+          - TASK
+        type: BUFFER
+        buffer:
+          type: UNIFORM
+          has_dynamic_offset: false
+          min_binding_size: null
+        count: null
 vertex_buffers:
   - Float32x2
 instance_buffers:
