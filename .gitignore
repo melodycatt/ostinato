@@ -1,3 +1,9 @@
 /target
 **/.DS_Store
 derive_resource/target
+/gtlf
+/build
+/skull.icns
+/*.blend
+/*.blend1
+

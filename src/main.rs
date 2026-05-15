@@ -23,7 +23,7 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
 };
 use winit::{
-    dpi::{PhysicalSize, Size},
+    dpi::{PhysicalPosition, PhysicalSize, Size},
     platform::macos::WindowAttributesExtMacOS,
     window::WindowAttributes,
 };
@@ -49,10 +49,19 @@ pub struct ExampleHandler {
 
     skull: ObjModel,
 }
+use std::path::PathBuf;
 
+fn resources_dir() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+
+    exe.parent() // MacOS
+        .and_then(|p| p.parent()) // Contents
+        .map(|p| p.join("Resources/res"))
+        .unwrap()
+}
 impl AppHandler for ExampleHandler {
     async fn new(context: &mut Context) -> anyhow::Result<Self> {
-        context.set_resource_directory(r"/Users/edwardlenzner/code/ostinato/res".to_owned());
+        context.set_resource_directory(resources_dir().to_string_lossy().to_string());
         //j tjhis
         let pipelines = [
             // BLINNPHONG
@@ -112,7 +121,25 @@ impl AppHandler for ExampleHandler {
 
         let renderer = &mut context.renderer;
 
-        renderer.window().set_cursor_hittest(false).unwrap();
+        let win = renderer.window();
+        // win.set_visible(false);
+        win.set_cursor_hittest(false).unwrap();
+
+        // let pos = PhysicalPosition {
+        //     x: size.width - 500,
+        //     y: size.height - 500,
+        // };
+        // win.current_monitor().unwrap().size()
+        // let size = win.current_monitor().unwrap().size();
+        // let pos = PhysicalPosition { x: 0, y: 0 };
+        // win.set_outer_position(pos);
+        // win.request_inner_size(size);
+        win.set_maximized(true);
+        // win.request_inner_size(PhysicalSize {
+        //     width: 600,
+        //     height: 600,
+        // });
+
         let lights = vec![LightUniform::new([-3., 5., 6.5], [1., 1., 1.], 30.)];
         let light_buffer = renderer
             .device
@@ -194,6 +221,15 @@ impl AppHandler for ExampleHandler {
         context: &mut Context,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> anyhow::Result<(), wgpu::SurfaceError> {
+        let size = context.renderer.window().inner_size();
+        pass.set_viewport(
+            size.width as f32 - 500.,
+            size.height as f32 - 500.,
+            500.,
+            500.,
+            0.,
+            1.,
+        );
         pass.set_bind_group(0, Some(&self.camera.bind_group), &[]);
 
         pass.set_pipeline(&self.pipelines[4]);
@@ -218,13 +254,14 @@ impl AppHandler for ExampleHandler {
         Ok(())
     }
     fn update(&mut self, context: &mut Context) -> anyhow::Result<()> {
+        let win = context.renderer.window();
         if context
             .keyboard
             .just_pressed(winit::keyboard::KeyCode::KeyD)
         {
-            let boo = !context.renderer.window().is_decorated();
-            context.renderer.window().set_decorations(boo);
-            context.renderer.window().set_cursor_hittest(boo).unwrap();
+            let boo = !win.is_decorated();
+            win.set_decorations(boo);
+            win.set_cursor_hittest(boo).unwrap();
         }
         // dbg!(self.lights[0].position);
         // self.camera_controller
@@ -245,7 +282,11 @@ impl AppHandler for ExampleHandler {
         //     0,
         //     bytemuck::cast_slice(&self.lights),
         // );
-        self.skull.transform.rotation = glam::Quat::from_rotation_y(elapsed * PI);
+        let s = win.inner_size();
+        let horizontal = (-(s.width as f64) + context.mouse.mouse_position.x + 250.).atan2(1000.0);
+        let vertical = (-(s.height as f64) + context.mouse.mouse_position.y + 250.).atan2(1000.0);
+        self.skull.transform.rotation = glam::Quat::from_rotation_y(horizontal as f32)
+            * glam::Quat::from_rotation_x(vertical as f32);
         self.cube.transform.rotation = glam::Quat::from_rotation_y(elapsed * PI);
         self.wireframe.transform.rotation = self.cube.transform.rotation;
         self.clickbait.transform = self.cube.transform;
@@ -265,11 +306,13 @@ impl AppHandler for ExampleHandler {
     fn window_attributes() -> winit::window::WindowAttributes {
         WindowAttributes::default()
             .with_transparent(true)
-            .with_active(true)
+            .with_active(false)
             .with_decorations(false)
             .with_has_shadow(false)
             .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
             .with_inner_size(PhysicalSize::new(500, 500))
+
+        // .with_visible(false)
     }
 }
 

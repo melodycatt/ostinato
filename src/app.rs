@@ -4,6 +4,7 @@ use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, Event, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
+    platform::macos::EventLoopBuilderExtMacOS,
 };
 
 // TODO remove wasm its annoying and uselesss since we use line polygon mode feature anyway
@@ -109,7 +110,10 @@ impl<T: AppHandler + 'static> ApplicationHandler<Context> for App<T> {
 }
 
 pub fn run<T: AppHandler + 'static>() -> anyhow::Result<()> {
-    let event_loop = EventLoop::with_user_event().build()?;
+    let event_loop = EventLoop::with_user_event()
+        .with_activate_ignoring_other_apps(false)
+        .with_activation_policy(winit::platform::macos::ActivationPolicy::Accessory)
+        .build()?;
     let mut app: App<T> = App::new();
     event_loop.run_app(&mut app)?;
 

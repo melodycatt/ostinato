@@ -99,8 +99,8 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
 
-        window.set_visible(true);
-        window.focus_window();
+        // window.set_visible(true);
+        // window.focus_window();
         let depth_texture =
             Texture::create_depth_texture(&device, (config.width, config.height), "depth_texture");
 

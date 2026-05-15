@@ -1,5 +1,7 @@
+#![feature(associated_type_defaults)]
 mod app;
 pub mod camera;
+pub mod ecs;
 pub mod input;
 pub mod mesh;
 pub mod renderer;
